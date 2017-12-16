@@ -3,7 +3,7 @@ import csv
 import datetime
 from collections import Counter
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
+base_dir = r'E:\Data\Overwatch'
 raw_data_dir = os.path.join(base_dir, 'raw_data')
 data_dir = os.path.join(base_dir, 'data')
 

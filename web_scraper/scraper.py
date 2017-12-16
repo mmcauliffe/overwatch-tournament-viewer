@@ -10,7 +10,7 @@ import calendar
 import time
 
 # base_dir = os.path.dirname(os.path.abspath(__file__))
-base_dir = r'D:\Data\Overwatch'
+base_dir = r'E:\Data\Overwatch'
 raw_data_dir = os.path.join(base_dir, 'raw_data')
 data_dir = os.path.join(base_dir, 'data')
 annotations_dir = os.path.join(raw_data_dir, 'annotations')
@@ -31,6 +31,7 @@ id = 513
 match_template = 'https://www.winstonslab.com/matches/match.php?id={}'
 event_template = 'https://www.winstonslab.com/events/event.php?id={}'
 
+test_files = [513, 1633, 1881, 1859, 1852, 1853, 1858]
 
 class NotFoundID(Exception):
     pass
@@ -307,6 +308,8 @@ def scrape_match_data():
     errors = []
     not_found = []
     for i in range(1, 2500):
+        if i not in test_files:
+            continue
         # if i != 513:
         #    continue
         if i in [201, 685, 1658]: # Bad ones
@@ -314,6 +317,7 @@ def scrape_match_data():
         print(i)
         try:
             d, hpd = parse_page(i)
+            parse_caps(i)
         except NotFoundID:
             not_found.append(str(i))
             continue
@@ -332,6 +336,30 @@ def scrape_match_data():
         f.write('\n'.join(errors))
     with open('not_found.txt', 'w', encoding='utf8') as f:
         f.write('\n'.join(not_found))
+
+def parse_caps(id):
+    match_dir = os.path.join(annotations_dir, str(id))
+    for gi in range(1, 7):
+        begins, ends = [], []
+        game_meta = None
+        game_dir = os.path.join(match_dir, str(gi))
+        if not os.path.exists(game_dir):
+            continue
+        for ri in range(1, 20):
+            if os.path.exists(os.path.join(game_dir, '{}_{}_caps.txt'.format(gi, ri))):
+                continue
+            page = requests.get('https://www.winstonslab.com/matches/mapAndPtCaps.php?matchID={}&gameNumber={}&roundNumber={}'.format(id, gi, ri))
+            try:
+                resp = page.content.decode('utf8')
+            except:
+                continue
+            if not resp:
+                print(gi, ri)
+                break
+            data = json.loads(resp)
+            with open(os.path.join(game_dir, '{}_{}_caps.txt'.format(gi, ri)), 'w', encoding='utf8',
+                         newline='') as dataf:
+                json.dump(data, dataf)
 
 
 def parse_timeline(id, map_wins):
@@ -412,11 +440,6 @@ def parse_timeline(id, map_wins):
         game_meta['ends'] = ends
         with open(os.path.join(game_dir, 'meta.json'), 'w', encoding='utf8') as f:
             json.dump(game_meta, f, sort_keys=True, indent=4)
-
-
-def scrape_timeline_data():
-    for i in range(513, 514):
-        parse_timeline(id)
 
 
 if __name__ == '__main__':
