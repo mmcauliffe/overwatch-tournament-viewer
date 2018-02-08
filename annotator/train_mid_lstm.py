@@ -6,19 +6,22 @@ import random
 import numpy as np
 import h5py
 
-working_dir = r'E:\Data\Overwatch\models\player_status_lstm'
+working_dir = r'E:\Data\Overwatch\models\mid_lstm'
 os.makedirs(working_dir, exist_ok=True)
 
-train_dir = r'E:\Data\Overwatch\training_data\player_status_lstm'
+train_dir = r'E:\Data\Overwatch\training_data\mid_lstm'
 hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
 
-set_files = {  # 'player': os.path.join(train_dir, 'player_set.txt'),
-    'hero': os.path.join(train_dir, 'hero_set.txt'),
-    'color': os.path.join(train_dir, 'color_set.txt'),
-    'alive': os.path.join(train_dir, 'alive_set.txt'),
-    'ult': os.path.join(train_dir, 'ult_set.txt'),
-    # 'spectator': os.path.join(train_dir, 'spectator_set.txt'),
-}
+
+set_files = {'replay': os.path.join(train_dir, 'replay_set.txt'),
+             'left_color': os.path.join(train_dir, 'color_set.txt'),
+             'right_color': os.path.join(train_dir, 'color_set.txt'),
+             'pause': os.path.join(train_dir, 'paused_set.txt'),
+             'overtime': os.path.join(train_dir, 'overtime_set.txt'),
+             'point_status': os.path.join(train_dir, 'point_set.txt'),
+             #'map': os.path.join(train_dir, 'map_set.txt'),
+             #'spectator': os.path.join(train_dir, 'spectator_set.txt'),
+             }
 
 
 def load_set(path):
@@ -160,7 +163,7 @@ if __name__ == '__main__':
     # Train model on dataset
     checkpointer = keras.callbacks.ModelCheckpoint(
         filepath=current_model_path, verbose=1, save_best_only=True)
-    early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=4, verbose=0,
+    early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=2, verbose=0,
                                                   mode='auto')
     print(gen.val_num // params['batch_size'])
     history = model.fit_generator(generator=training_generator,
@@ -172,8 +175,8 @@ if __name__ == '__main__':
                                   # validation_steps=100
                                   callbacks=[checkpointer, early_stopper]
                                   )
-    final_output_weights = os.path.join(working_dir, 'player_weights.h5')
-    final_output_json = os.path.join(working_dir, 'player_model.json')
+    final_output_weights = os.path.join(working_dir, 'mid_weights.h5')
+    final_output_json = os.path.join(working_dir, 'mid_model.json')
     model.save_weights(final_output_weights)
     model_json = model.to_json()
     with open(final_output_json, "w") as json_file:
@@ -183,8 +186,8 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
     # summarize history for accuracy
-    plt.plot(history.history['hero_output_acc'])
-    plt.plot(history.history['val_hero_output_acc'])
+    plt.plot(history.history['point_status_output_acc'])
+    plt.plot(history.history['val_point_status_output_acc'])
     plt.title('model accuracy')
     plt.ylabel('accuracy')
     plt.xlabel('epoch')

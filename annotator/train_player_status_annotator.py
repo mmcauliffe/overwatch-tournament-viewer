@@ -9,7 +9,7 @@ import h5py
 
 working_dir = r'E:\Data\Overwatch\models\player_status_cnn'
 os.makedirs(working_dir, exist_ok=True)
-
+TEST = True
 train_dir = r'E:\Data\Overwatch\training_data\player_status_cnn'
 hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
 
@@ -55,14 +55,17 @@ class DataGenerator(object):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.hdf5_file = h5py.File(hdf5_path, "r")
-        self.data_num = self.hdf5_file["train_img"].shape[0]
+        if TEST:
+            self.data_num = self.hdf5_file["train_img"].shape[0]
+        else:
+            self.data_num = self.hdf5_file["train_img"].shape[0] + self.hdf5_file["val_img"].shape[0]
         self.val_num = self.hdf5_file["val_img"].shape[0]
         self.subtract_mean = subtract_mean
         if self.subtract_mean:
             self.mm = self.hdf5_file["train_mean"][0, ...]
             self.mm = self.mm[np.newaxis, ...].astype(np.uint8)
 
-    def __get_exploration_order(self, train=True):
+    def _get_exploration_order(self, train=True):
         'Generates order of exploration'
         # Find exploration order
         if train:
@@ -73,12 +76,18 @@ class DataGenerator(object):
             random.shuffle(batches_list)
         return batches_list
 
-    def __data_generation(self, i_s, i_e, train=True):
+    def _data_generation(self, i_s, i_e, train=True):
         'Generates data of batch_size samples'  # X : (n_samples, v_size, v_size, v_size, n_channels)
         if train:
             pre = 'train'
         else:
             pre = 'val'
+        if not TEST:
+            train_num = self.hdf5_file["train_img"].shape[0]
+            if i_s >=train_num:
+                pre = 'val'
+                i_s -= train_num
+                i_e -= train_num
         images = self.hdf5_file["{}_img".format(pre)][i_s:i_e, ...]
         #print(hero_set[self.hdf5_file["{}_hero_label".format(pre)][i_s]])
         #cv2.imshow('frame', images[0, :])
@@ -96,12 +105,12 @@ class DataGenerator(object):
         # Infinite loop
         while 1:
             # Generate order of exploration of dataset
-            batches_list = self.__get_exploration_order()
+            batches_list = self._get_exploration_order()
 
             for n, i in enumerate(batches_list):
                 i_s = i * self.batch_size  # index of the first image in this batch
                 i_e = min([(i + 1) * self.batch_size, self.data_num])  # index of the last image in this batch
-                X, y = self.__data_generation(i_s, i_e)
+                X, y = self._data_generation(i_s, i_e)
                 yield X, y
 
     def generate_val(self):
@@ -109,14 +118,36 @@ class DataGenerator(object):
         # Infinite loop
         while 1:
             # Generate order of exploration of dataset
-            batches_list = self.__get_exploration_order(train=False)
+            batches_list = self._get_exploration_order(train=False)
 
             for n, i in enumerate(batches_list):
                 i_s = i * self.batch_size  # index of the first image in this batch
                 i_e = min([(i + 1) * self.batch_size, self.val_num])  # index of the last image in this batch
-                X, y = self.__data_generation(i_s, i_e, train=False)
+                X, y = self._data_generation(i_s, i_e, train=False)
                 yield X, y
 
+def check_val_errors(model, gen):
+    import time
+    # Generate order of exploration of dataset
+    batches_list = gen._get_exploration_order(train=False)
+
+    for n, i in enumerate(batches_list):
+        i_s = i * gen.batch_size  # index of the first image in this batch
+        i_e = min([(i + 1) * gen.batch_size, gen.val_num])  # index of the last image in this batch
+        X, y = gen._data_generation(i_s, i_e, train=False)
+        print(X.shape)
+        preds = model.predict_on_batch(X)
+        for output_ind, (output_key, s) in enumerate(sets.items()):
+            cnn_inds = preds[output_ind].argmax(axis=1)
+            for t_ind in range(X.shape[0]):
+                cnn_label = s[cnn_inds[t_ind]]
+                actual_label = s[y['{}_output'.format(output_key)][t_ind].argmax(axis=0)]
+                if cnn_label != actual_label:
+                    print(output_key)
+                    print(cnn_label, actual_label)
+                    print(gen.hdf5_file['val_round'][i_s+t_ind], time.strftime('%M:%S', time.gmtime(gen.hdf5_file['val_time_point'][i_s+t_ind])))
+                    cv2.imshow('frame', X[t_ind, ...])
+                    cv2.waitKey(0)
 
 if __name__ == '__main__':
     import keras
@@ -138,68 +169,91 @@ if __name__ == '__main__':
     gen = DataGenerator(hdf5_path, **params)
     training_generator = gen.generate_train()
     validation_generator = gen.generate_val()
+    final_output_weights = os.path.join(working_dir, 'player_weights.h5')
+    final_output_json = os.path.join(working_dir, 'player_model.json')
     print('set up complete')
     # Design model
     current_model_path = os.path.join(working_dir, 'current_player_model.hdf5')
-    if not os.path.exists(current_model_path):
-        main_input = Input(shape=input_shape, name='main_input')
-        x = Conv2D(64, kernel_size=(6, 6), strides=(1, 1),
-                   activation='relu')(main_input)
-        x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
-        x = Conv2D(128, (6, 6), activation='relu')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
+    if not os.path.exists(final_output_json):
+        if not os.path.exists(current_model_path):
+            main_input = Input(shape=input_shape, name='main_input')
+            x = Conv2D(64, kernel_size=(6, 6), strides=(1, 1),
+                       activation='relu')(main_input)
+            x = Conv2D(64, kernel_size=(6, 6), strides=(1, 1),
+                       activation='relu')(x)
+            x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
+            x = Conv2D(128, (6, 6), activation='relu')(x)
+            x = MaxPooling2D(pool_size=(2, 2))(x)
 
-        x = Dropout(0.25)(x)
-        x = Flatten()(x)
-        x = Dense(50, activation='relu', name='representation')(x)
-        x = Dropout(0.5)(x)
+            x = Dropout(0.25)(x)
+            x = Flatten()(x)
+            x = Dense(50, activation='relu')(x)
+            x = Dense(50, activation='relu', name='representation')(x)
+            x = Dropout(0.5)(x)
 
-        outputs = []
-        for k, count in class_counts.items():
-            outputs.append(Dense(count, activation='softmax', name=k+'_output')(x))
-        model = Model(inputs=[main_input], outputs=outputs)
-        model.summary()
-        model.compile(loss=keras.losses.categorical_crossentropy,
-                      optimizer=keras.optimizers.Adadelta(),
-                      metrics=['accuracy'])
-        print('model compiled')
+            outputs = []
+            for k, count in class_counts.items():
+                outputs.append(Dense(count, activation='softmax', name=k+'_output')(x))
+            model = Model(inputs=[main_input], outputs=outputs)
+            model.summary()
+            model.compile(loss=keras.losses.categorical_crossentropy,
+                          optimizer=keras.optimizers.Adadelta(),
+                          metrics=['accuracy'])
+            print('model compiled')
+        else:
+            model = keras.models.load_model(current_model_path)
+        # Train model on dataset
+        checkpointer = keras.callbacks.ModelCheckpoint(
+            filepath=current_model_path, verbose=1, save_best_only=True)
+        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=2, verbose=0, mode='auto')
+        history = model.fit_generator(generator=training_generator,
+                            epochs=num_epochs,
+                            steps_per_epoch=gen.data_num  // params['batch_size'],
+                            # steps_per_epoch=100,
+                            validation_data=validation_generator,
+                            validation_steps=gen.val_num // params['batch_size'],
+                            # validation_steps=100
+                            callbacks=[checkpointer,
+                                       early_stopper
+                                       ]
+                            )
+        model.save_weights(final_output_weights)
+        model_json = model.to_json()
+        with open(final_output_json, "w") as json_file:
+            json_file.write(model_json)
+        # list all data in history
+        print(history.history.keys())
+        import matplotlib.pyplot as plt
+        # summarize history for accuracy
+        plt.plot(history.history['hero_output_acc'])
+        plt.plot(history.history['val_hero_output_acc'])
+        plt.title('model accuracy')
+        plt.ylabel('accuracy')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'test'], loc='upper left')
+        plt.show()
+        # summarize history for loss
+        plt.plot(history.history['loss'])
+        plt.plot(history.history['val_loss'])
+        plt.title('model loss')
+        plt.ylabel('loss')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'test'], loc='upper left')
+        plt.show()
+        print(history.history)
+        print(history.history['loss'])
+        with open(os.path.join(working_dir, 'history.txt'), 'w') as f:
+            lines = []
+            for i in range(len(history.history['loss'])):
+                line = []
+                for k in history.history.keys():
+                    line.append(history.history[k][i])
+            f.write('\t'.join(history.history.keys()) + '\n')
+            for line in lines:
+                f.write('\t'.join(line) + '\n')
     else:
-        model = keras.models.load_model(current_model_path)
-    # Train model on dataset
-    checkpointer = keras.callbacks.ModelCheckpoint(
-        filepath=current_model_path, verbose=1, save_best_only=True)
-    early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=5, verbose=0, mode='auto')
-    history = model.fit_generator(generator=training_generator,
-                        epochs=num_epochs,
-                        steps_per_epoch=gen.data_num  // params['batch_size'],
-                        # steps_per_epoch=100,
-                        validation_data=validation_generator,
-                        validation_steps=gen.val_num // params['batch_size'],
-                        # validation_steps=100
-                        callbacks=[checkpointer, early_stopper]
-                        )
-    final_output_weights = os.path.join(working_dir, 'player_weights.h5')
-    final_output_json = os.path.join(working_dir, 'player_model.json')
-    model.save_weights(final_output_weights)
-    model_json = model.to_json()
-    with open(final_output_json, "w") as json_file:
-        json_file.write(model_json)
-    # list all data in history
-    print(history.history.keys())
-    import matplotlib.pyplot as plt
-    # summarize history for accuracy
-    plt.plot(history.history['hero_output_acc'])
-    plt.plot(history.history['val_hero_output_acc'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
-    # summarize history for loss
-    plt.plot(history.history['loss'])
-    plt.plot(history.history['val_loss'])
-    plt.title('model loss')
-    plt.ylabel('loss')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
+        with open(final_output_json, 'r') as f:
+            loaded_model_json = f.read()
+        model = keras.models.model_from_json(loaded_model_json)
+        model.load_weights(final_output_weights)
+    check_val_errors(model, gen)

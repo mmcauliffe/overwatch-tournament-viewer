@@ -32,7 +32,7 @@ mid_set_files = {'replay': os.path.join(mid_train_dir, 'replay_set.txt'),
                  'pause': os.path.join(mid_train_dir, 'paused_set.txt'),
                  'overtime': os.path.join(mid_train_dir, 'overtime_set.txt'),
                  'point_status': os.path.join(mid_train_dir, 'point_set.txt'),
-                 #'map': os.path.join(mid_train_dir, 'map_set.txt'),
+                 # 'map': os.path.join(mid_train_dir, 'map_set.txt'),
                  }
 
 
@@ -49,8 +49,8 @@ for k, v in player_set_files.items():
     player_sets[k] = load_set(v)
 
 kf_sets = {}
-for k, v in kf_set_files.items():
-    kf_sets[k] = load_set(v)
+#for k, v in kf_set_files.items():
+#    kf_sets[k] = load_set(v)
 
 mid_sets = {}
 for k, v in mid_set_files.items():
@@ -193,8 +193,10 @@ def predict_kf(frame, kf_model):
             continue
         kf.append(list(slot.values()))
 
+
 from threading import Thread
 from queue import Queue, Empty
+
 
 class FileVideoStream:
     def __init__(self, path, begin, end, time_step, queueSize=128):
@@ -247,7 +249,7 @@ class FileVideoStream:
 
     def read(self):
         # return next frame in the queue
-        if self.stopped:
+        if self.stopped and not self.more():
             raise Empty
         return self.Q.get()
 
@@ -260,27 +262,39 @@ class FileVideoStream:
         # return True if there are still frames in the queue
         return self.Q.qsize() > 0
 
+
 def predict_on_video(video_path, begin, end):
     print('beginning prediction')
     time_step = 0.1
     frames = (end - begin) / time_step
-    frames_per_seq = 200
+    frames_per_seq = 100
     shape = (frames_per_seq, 67, 67, 3)
+    kf_shape = (frames_per_seq, 32, 210, 3)
     num_players = 1
     fvs = FileVideoStream(video_path, begin, end, time_step).start()
     left_params = BOX_PARAMETERS['REGULAR']['LEFT']
     right_params = BOX_PARAMETERS['REGULAR']['RIGHT']
+    kf_params = BOX_PARAMETERS['REGULAR']['KILL_FEED_SLOT']
     j = 0
-    statuses = {}
+    lstm_kfs = {}
+    # cnn_kfs = {}
+    for i in range(6):
+        lstm_kfs[i] = {k: [] for k in kf_sets.keys()}
+        # cnn_kfs[i] = {k: [] for k in kf_sets.keys()}
+    lstm_statuses = {}
+    cnn_statuses = {}
     for side in ['left', 'right']:
         for i in range(6):
-            statuses[(side, i)] = {k: [] for k in player_sets.keys()}
-    to_predicts = {k: np.zeros(shape, dtype=np.uint8) for k in statuses.keys()}
-    expected_sequence_count = int(frames/ frames_per_seq) + 1
+            lstm_statuses[(side, i)] = {k: [] for k in player_sets.keys()}
+            cnn_statuses[(side, i)] = {k: [] for k in player_sets.keys()}
+    to_predicts = {k: np.zeros(shape, dtype=np.uint8) for k in lstm_statuses.keys()}
+    to_predicts_kf = {k: np.zeros(kf_shape, dtype=np.uint8) for k in lstm_kfs.keys()}
+    expected_sequence_count = int(frames / frames_per_seq) + 1
     time = 0
     seq_ind = 0
     print(begin, end, end - begin)
     frame_ind = 0
+    kf = []
     while True:
         try:
             frame = fvs.read()
@@ -288,7 +302,7 @@ def predict_on_video(video_path, begin, end):
             break
         print('frames', frame_ind, frames)
         frame_ind += 1
-        for player in statuses.keys():
+        for player in lstm_statuses.keys():
             side, pos = player
             if side == 'left':
                 params = left_params
@@ -300,31 +314,188 @@ def predict_on_video(video_path, begin, end):
             box = frame[params['Y']: params['Y'] + params['HEIGHT'],
                   x: x + params['WIDTH']]
             to_predicts[player][j, ...] = box[None]
+        for slot in lstm_kfs.keys():
+            x = kf_params['X']
+            y = kf_params['Y']
+            y += (kf_params['HEIGHT'] + kf_params['MARGIN']) * (slot)
+            box = frame[y: y + kf_params['HEIGHT'],
+                  x: x + kf_params['WIDTH']]
+            to_predicts_kf[slot][j, ...] = box[None]
         j += 1
         if j == frames_per_seq:
             print('sequences', seq_ind, expected_sequence_count)
             seq_ind += 1
-            for player in statuses.keys():
-                intermediate_output = player_cnn_model.predict(to_predicts[player])
-                output = player_lstm_model.predict(intermediate_output[None])
+            for player in lstm_statuses.keys():
+
+                intermediate_output = player_cnn_intermediate_model.predict(to_predicts[player])
+                lstm_output = player_lstm_model.predict(intermediate_output[None])
+                cnn_output = player_cnn_model.predict(to_predicts[player])
                 for output_ind, (output_key, s) in enumerate(player_sets.items()):
-                    label_inds = output[output_ind].argmax(axis=2)
-                    for t_ind in range(label_inds.shape[1]):
+                    cnn_inds = cnn_output[output_ind].argmax(axis=1)
+                    label_inds = lstm_output[output_ind].argmax(axis=2)
+                    for t_ind in range(frames_per_seq):
                         current_time = time + (t_ind * time_step)
-                        label = s[label_inds[0,t_ind]]
-                        if len(statuses[player][output_key]) == 0:
-                            statuses[player][output_key].append({'begin': 0, 'end':0, 'status':label})
-                        else:
-                            if label == statuses[player][output_key][-1]['status']:
-                                statuses[player][output_key][-1]['end'] = current_time
+                        lstm_label = s[label_inds[0, t_ind]]
+                        if lstm_label != 'n/a':
+                            if len(lstm_statuses[player][output_key]) == 0:
+                                lstm_statuses[player][output_key].append({'begin': 0, 'end': 0, 'status': lstm_label})
                             else:
-                                statuses[player][output_key].append({'begin': current_time, 'end': current_time, 'status':label})
+                                if lstm_label == lstm_statuses[player][output_key][-1]['status']:
+                                    lstm_statuses[player][output_key][-1]['end'] = current_time
+                                else:
+                                    lstm_statuses[player][output_key].append(
+                                        {'begin': current_time, 'end': current_time, 'status': lstm_label})
+                        cnn_label = s[cnn_inds[t_ind]]
+                        if len(cnn_statuses[player][output_key]) == 0:
+                            cnn_statuses[player][output_key].append({'begin': 0, 'end': 0, 'status': cnn_label})
+                        else:
+                            if cnn_label == cnn_statuses[player][output_key][-1]['status']:
+                                cnn_statuses[player][output_key][-1]['end'] = current_time
+                            else:
+                                cnn_statuses[player][output_key].append(
+                                    {'begin': current_time, 'end': current_time, 'status': cnn_label})
+            cur_kf = [{'time_point': round(time + (t_ind * time_step), 1), 'slots': {}} for t_ind in
+                      range(frames_per_seq)]
+
+            slot_inputs = [np.zeros((frames_per_seq, 50))[None]]
+
+            for slot in lstm_kfs.keys():
+                intermediate_output = kf_cnn_intermediate_model.predict(to_predicts_kf[slot])
+                slot_inputs.append(intermediate_output[None])
+            lstm_output = kf_lstm_model.predict(slot_inputs)
+
+            for t_ind in range(frames_per_seq):
+                for slot in range(6):
+                    d = {}
+                    for output_ind, (output_key, s) in enumerate(kf_sets.items()):
+
+                        lstm_inds = lstm_output[slot * 6 + output_ind].argmax(axis=2)
+                        lstm_label = s[lstm_inds[0, t_ind]]
+                        d[output_key] = lstm_label
+                    if d['second_hero'] != 'n/a':
+                        cur_kf[t_ind]['slots'][slot] = d
+            kf.extend(cur_kf)
 
             time += (j * time_step)
-            print(time, end - begin)
-            to_predicts = {k: np.zeros(shape, dtype=np.uint8) for k in statuses.keys()}
+            to_predicts = {k: np.zeros(shape, dtype=np.uint8) for k in lstm_statuses.keys()}
             j = 0
-    print(statuses)
+    if j != 0:
+        for player in lstm_statuses.keys():
+            intermediate_output = player_cnn_intermediate_model.predict(to_predicts[player])
+            lstm_output = player_lstm_model.predict(intermediate_output[None])
+            cnn_output = player_cnn_model.predict(to_predicts[player])
+            for output_ind, (output_key, s) in enumerate(player_sets.items()):
+                cnn_inds = cnn_output[output_ind].argmax(axis=1)
+                label_inds = lstm_output[output_ind].argmax(axis=2)
+                for t_ind in range(label_inds.shape[0]):
+                    current_time = time + (t_ind * time_step)
+                    lstm_label = s[label_inds[0, t_ind]]
+                    if len(lstm_statuses[player][output_key]) == 0:
+                        lstm_statuses[player][output_key].append({'begin': 0, 'end': 0, 'status': lstm_label})
+                    else:
+                        if lstm_label == lstm_statuses[player][output_key][-1]['status']:
+                            lstm_statuses[player][output_key][-1]['end'] = current_time
+                        else:
+                            lstm_statuses[player][output_key].append(
+                                {'begin': current_time, 'end': current_time, 'status': lstm_label})
+                    cnn_label = s[cnn_inds[t_ind]]
+                    if len(cnn_statuses[player][output_key]) == 0:
+                        cnn_statuses[player][output_key].append({'begin': 0, 'end': 0, 'status': cnn_label})
+                    else:
+                        if cnn_label == cnn_statuses[player][output_key][-1]['status']:
+                            cnn_statuses[player][output_key][-1]['end'] = current_time
+                        else:
+                            cnn_statuses[player][output_key].append(
+                                {'begin': current_time, 'end': current_time, 'status': cnn_label})
+    # for k, v in cnn_statuses.items():
+    #    print(k)
+    #    for k2, v2 in v.items():
+    #        print(k2)
+    #        print(v2)
+    # print('cnn', generate_events(cnn_statuses))
+    # for k, v in lstm_statuses.items():
+    #    print(k)
+    #    for k2, v2 in v.items():
+    #        print(k2)
+    #        print(v2)
+    player_states = generate_states(lstm_statuses)
+    print('lstm', )
+    generate_kill_events(kf, player_states)
+
+
+def generate_kill_events(kf, player_states):
+    death_events = []
+    for p, s in player_states.items():
+        death_events.extend(s.generate_death_events())
+    print(sorted(death_events))
+    print('KILL FEED')
+    possible_events = []
+    for ind, k in enumerate(kf):
+        for slot in range(6):
+            if slot not in k['slots']:
+                continue
+            prev_events = []
+            if ind != 0:
+                if 0 in kf[ind-1]['slots']:
+                    prev_events.append(kf[ind-1]['slots'][0])
+                for j in range(slot,0, -1):
+                    if j in kf[ind-1]['slots']:
+                        prev_events.append(kf[ind-1]['slots'][j])
+            e = k['slots'][slot]
+            if e in prev_events:
+                for p_ind, poss_e in enumerate(possible_events):
+                    if e == poss_e['event'] and poss_e['time_point'] + poss_e['duration'] + 0.15 >= k['time_point']:
+                        possible_events[p_ind]['duration'] = k['time_point'] - poss_e['time_point']
+            else:
+                possible_events.append({'time_point': k['time_point'], 'duration':0, 'event':e})
+
+
+    for i, p in enumerate(possible_events):
+        print(p)
+
+
+class PlayerState(object):
+    def __init__(self, player, statuses):
+        self.player = player
+        self.statuses = statuses
+        self.color = self.statuses['color'][0]['status']
+
+    def hero_at_time(self, time_point):
+        for hero_state in self.statuses['hero']:
+            if hero_state['end'] >= time_point >= hero_state['begin']:
+                return hero_state['status']
+
+    def generate_death_events(self):
+        deaths = []
+        print(self.player)
+        for alive_state in self.statuses['alive']:
+            print(alive_state)
+            if alive_state['status'] == 'dead':
+                deaths.append([alive_state['begin'] + 0.2, (self.hero_at_time(alive_state['begin']), self.color)])
+        return deaths
+
+    def generate_switches(self):
+        switches = []
+        for hero_state in self.statuses['hero']:
+            switches.append([self.player, hero_state['begin'], hero_state['status']])
+
+    def generate_ults(self):
+        ult_gains, ult_uses = [], []
+        for i, ult_state in enumerate(self.statuses['has_ult']):
+
+            if ult_state['status'] == 'has_ult':
+                ult_gains.append([self.player, ult_state['begin']])
+            elif i > 0 and ult_state['status'] == 'no_ult':
+                ult_uses.append([self.player, ult_state['begin']])
+        return ult_gains, ult_uses
+
+
+def generate_states(statuses):
+    player_states = {}
+    for player, s in statuses.items():
+        player_states[player] = PlayerState(player, s)
+    return player_states
+
 
 def load_player_cnn_model():
     final_output_weights = os.path.join(working_dir, 'player_status_cnn', 'player_weights.h5')
@@ -335,7 +506,7 @@ def load_player_cnn_model():
     model.load_weights(final_output_weights)
     embedding_model = keras.models.Model(inputs=model.input,
                                          outputs=model.get_layer('representation').output)
-    return embedding_model
+    return model, embedding_model
 
 
 def load_player_lstm_model():
@@ -348,9 +519,21 @@ def load_player_lstm_model():
     return model
 
 
-def load_kf_model():
-    final_output_weights = os.path.join(working_dir, 'kf_weights.h5')
-    final_output_json = os.path.join(working_dir, 'kf_model.json')
+def load_kf_cnn_model():
+    final_output_weights = os.path.join(working_dir, 'kf_cnn', 'kf_weights.h5')
+    final_output_json = os.path.join(working_dir, 'kf_cnn', 'kf_model.json')
+    with open(final_output_json, 'r') as f:
+        loaded_model_json = f.read()
+    model = keras.models.model_from_json(loaded_model_json)
+    model.load_weights(final_output_weights)
+    embedding_model = keras.models.Model(inputs=model.input,
+                                         outputs=model.get_layer('representation').output)
+    return model, embedding_model
+
+
+def load_kf_lstm_model():
+    final_output_weights = os.path.join(working_dir, 'kf_lstm', 'kf_weights.h5')
+    final_output_json = os.path.join(working_dir, 'kf_lstm', 'kf_model.json')
     with open(final_output_json, 'r') as f:
         loaded_model_json = f.read()
     model = keras.models.model_from_json(loaded_model_json)
@@ -359,13 +542,16 @@ def load_kf_model():
 
 
 if __name__ == '__main__':
-    # kf_model = load_kf_model()
-    player_cnn_model = load_player_cnn_model()
+    kf_cnn_model, kf_cnn_intermediate_model = load_kf_cnn_model()
+    kf_lstm_model = load_kf_lstm_model()
+    player_cnn_model, player_cnn_intermediate_model = load_player_cnn_model()
     player_lstm_model = load_player_lstm_model()
 
     print('loaded model')
     to_annotate = r"E:\Data\Overwatch\raw_data\annotations\matches\2372\1\1.mp4"
-    begin, end = 550, 973
-    #to_annotate = r"E:\Data\Overwatch\raw_data\annotations\matches\2360\2360.mp4"
-    #begin, end = 2000, 2100
+    begin, end = 488 + 300, 488 + 360
+    # to_annotate = r"E:\Data\Overwatch\raw_data\annotations\matches\2360\2360.mp4"
+    # begin, end = 2000, 2100
+    # to_annotate = r"E:\Data\Overwatch\raw_data\annotations\matches\2374\3\3.mp4"
+    # begin, end = 438 + 60, 438 + 120
     predict_on_video(to_annotate, begin, end)
