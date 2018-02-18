@@ -5,7 +5,10 @@ import h5py
 import random
 import cv2
 
-local_directory = r'E:\Data\Overwatch\raw_data\annotations\matches'
+from annotator.utils import get_local_file, HERO_SET, ABILITY_SET, BOX_PARAMETERS, get_player_states, get_local_path, \
+    get_kf_events, get_round_states, get_train_rounds, FileVideoStream, look_up_player_state, look_up_round_state, \
+    load_set, Empty, calculate_ability_boundaries, calculate_first_hero_boundaries, calculate_hero_boundaries, FileVideoStreamRange, get_event_ranges, COLOR_SET,calculate_first_player_boundaries, calculate_assist_boundaries
+
 training_data_directory = r'E:\Data\Overwatch\training_data'
 model_directory = r'E:\Data\Overwatch\models'
 cnn_status_model_dir = os.path.join(model_directory, 'player_status_cnn')
@@ -18,279 +21,6 @@ lstm_mid_train_dir = os.path.join(training_data_directory, 'mid_lstm')
 cnn_kf_train_dir = os.path.join(training_data_directory, 'kf_cnn')
 lstm_kf_train_dir = os.path.join(training_data_directory, 'kf_lstm')
 model_directory = r'E:\Data\Overwatch\models'
-
-site_url = 'http://localhost:8000/'
-
-api_url = site_url + 'annotator/api/'
-
-BOX_PARAMETERS = {
-    'REGULAR': {
-        'MID': {
-            'HEIGHT': 140,
-            'WIDTH': 300,
-            'X': 490,
-            'Y': 45},
-
-        'KILL_FEED': {
-            'Y': 115,
-            'X': 1020,
-            'WIDTH': 210,
-            'HEIGHT': 205
-        },
-        'KILL_FEED_SLOT': {
-            'Y': 115,
-            'X': 1020,
-            'WIDTH': 210,
-            'HEIGHT': 32,
-            'MARGIN': 2
-        },
-        'LEFT': {
-            'Y': 40,
-            'X': 30,
-            'WIDTH': 67,
-            'HEIGHT': 67,
-            'MARGIN': 4,
-        },
-        'RIGHT': {
-            'Y': 40,
-            'X': 830,
-            'WIDTH': 67,
-            'HEIGHT': 67,
-            'MARGIN': 4,
-        }
-    },
-    'APEX': {  # Black borders around video feed
-        'MID': {
-            'HEIGHT': 140,
-            'WIDTH': 300,
-            'X': 490,
-            'Y': 45},
-
-        'KILL_FEED': {
-            'Y': 115,
-            'X': 950,
-            'WIDTH': 270,
-            'HEIGHT': 205
-        },
-        'LEFT': {
-            'Y': 45,
-            'X': 51,
-            'WIDTH': 67,
-            'HEIGHT': 55,
-            'MARGIN': 1,
-        },
-        'RIGHT': {
-            'Y': 45,
-            'X': 825,
-            'WIDTH': 67,
-            'HEIGHT': 55,
-            'MARGIN': 1,
-        }
-    }
-}
-
-
-def get_train_rounds():
-    url = api_url + 'train_rounds/'
-    r = requests.get(url)
-    return r.json()
-
-
-def get_player_states(round_id):
-    url = api_url + 'rounds/{}/player_states/'.format(round_id)
-    r = requests.get(url)
-    data = r.json()
-    for side, d in data.items():
-        for ind, v in d.items():
-            for k in ['ult', 'alive', 'hero']:
-                data[side][ind]['{}_array'.format(k)] = np.array([x['end'] for x in v[k]])
-    return data
-
-
-def get_round_states(round_id):
-    url = api_url + 'rounds/{}/round_states/'.format(round_id)
-    r = requests.get(url)
-    return r.json()
-
-
-def get_kf_events(round_id):
-    url = api_url + 'rounds/{}/kill_feed_events/'.format(round_id)
-    r = requests.get(url)
-    return r.json()
-
-
-def get_hero_list():
-    url = api_url + 'heroes/'
-    r = requests.get(url)
-    return sorted(set(x['name'].lower() for x in r.json()))
-
-
-def get_npc_list():
-    url = api_url + 'npcs/'
-    r = requests.get(url)
-    return sorted(set(x['name'].lower() for x in r.json()))
-
-
-def get_ability_list():
-    ability_set = set()
-    url = api_url + 'abilities/damaging_abilities/'
-    r = requests.get(url)
-    resp = r.json()
-    for a in resp:
-        ability_set.add(a['name'].lower())
-    url = api_url + 'abilities/reviving_abilities/'
-    r = requests.get(url)
-    resp = r.json()
-    for a in resp:
-        ability_set.add(a['name'].lower())
-    return ability_set
-
-
-HERO_SET = get_hero_list() + get_npc_list()
-
-ABILITY_SET = sorted(get_ability_list())
-
-
-def get_local_path(r):
-    match_directory = os.path.join(local_directory, str(r['game']['match']['wl_id']))
-    game_directory = os.path.join(match_directory, str(r['game']['game_number']))
-    game_path = os.path.join(game_directory, '{}.mp4'.format(r['game']['game_number']))
-    if os.path.exists(game_path):
-        return game_path
-    match_path = os.path.join(match_directory, '{}.mp4'.format(r['game']['match']['wl_id']))
-    if os.path.exists(match_path):
-        return match_path
-
-
-def look_up_player_state(side, index, time, states):
-    states = states[side][str(index)]
-
-    data = {}
-    ind = np.searchsorted(states['ult_array'], time, side="right")
-    if ind == len(states['ult']):
-        ind -= 1
-    data['ult'] = states['ult'][ind]['status']
-
-    ind = np.searchsorted(states['alive_array'], time, side="right")
-    if ind == len(states['alive']):
-        ind -= 1
-    data['alive'] = states['alive'][ind]['status']
-
-    ind = np.searchsorted(states['hero_array'], time, side="right")
-    if ind == len(states['hero']):
-        ind -= 1
-    data['hero'] = states['hero'][ind]['hero']['name'].lower()
-
-    data['player'] = states['player'].lower()
-    return data
-
-
-def look_up_round_state(time, states):
-    data = {}
-    for t in states['overtimes']:
-        if t['begin'] <= time < t['end']:
-            data['overtime'] = t['status']
-            break
-    else:
-        data['overtime'] = states['overtimes'][-1]['status']
-    for t in states['pauses']:
-        if t['begin'] <= time < t['end']:
-            data['pause'] = t['status']
-            break
-    else:
-        data['pause'] = states['pauses'][-1]['status']
-    for t in states['replays']:
-        if t['begin'] <= time < t['end']:
-            data['replay'] = t['status']
-            break
-    else:
-        data['replay'] = states['replays'][-1]['status']
-    for t in states['point_status']:
-        if t['begin'] <= time < t['end']:
-            data['point_status'] = t['status']
-            break
-    else:
-        data['point_status'] = 'n/a'
-    return data
-
-
-def load_set(path):
-    ts = []
-    with open(path, 'r', encoding='utf8') as f:
-        for line in f:
-            ts.append(line.strip())
-    return ts
-
-
-from threading import Thread
-from queue import Queue, Empty
-
-
-class FileVideoStream:
-    def __init__(self, path, begin, end, time_step, queueSize=128):
-        # initialize the file video stream along with the boolean
-        # used to indicate if the thread should be stopped or not
-        self.stream = cv2.VideoCapture(path)
-        self.fps = self.stream.get(cv2.CAP_PROP_FPS)
-        self.stopped = False
-        self.begin = begin
-        self.end = end
-        self.time_step = time_step
-
-        # initialize the queue used to store frames read from
-        # the video file
-        self.Q = Queue(maxsize=queueSize)
-
-    def start(self):
-        # start a thread to read frames from the file video stream
-        t = Thread(target=self.update, args=())
-        t.daemon = True
-        t.start()
-        return self
-
-    def update(self):
-        # keep looping infinitely
-        time_point = self.begin
-        while True:
-            # if the thread indicator variable is set, stop the
-            # thread
-            if self.stopped:
-                return
-
-            # otherwise, ensure the queue has room in it
-            if not self.Q.full():
-                # read the next frame from the file
-                frame_number = int(round(time_point * self.fps)) - 1
-                self.stream.set(1, frame_number)
-                (grabbed, frame) = self.stream.read()
-                # if the `grabbed` boolean is `False`, then we have
-                # reached the end of the video file
-                if not grabbed:
-                    self.stop()
-                    return
-
-                # add the frame to the queue
-                self.Q.put(frame)
-                time_point += self.time_step
-                time_point = round(time_point, 1)
-                if time_point > self.end:
-                    self.stop()
-                    return
-
-    def read(self):
-        # return next frame in the queue
-        if self.stopped and self.Q.qsize() == 0:
-            raise Empty
-        return self.Q.get()
-
-    def stop(self):
-        # indicate that the thread should be stopped
-        self.stopped = True
-        self.stream.release()
-
-    def more(self):
-        # return True if there are still frames in the queue
-        return self.Q.qsize() > 0
 
 
 def generate_data_for_player_lstm(rounds):
@@ -651,7 +381,8 @@ def generate_data_for_player_cnn(rounds):
         print('skipping player cnn data')
         return
     print('beginning player cnn data')
-    time_step = 0.2
+    time_step = 0.1
+    frames_per_seq = 100
     frames = []
     na_lab = 'n/a'
     set_files = {'hero': os.path.join(cnn_status_train_dir, 'hero_set.txt'),
@@ -663,25 +394,39 @@ def generate_data_for_player_cnn(rounds):
             'player': [na_lab],
             'ult': [na_lab, 'no_ult', 'has_ult'],
             'alive': [na_lab, 'alive', 'dead'],
-            'color': [na_lab, 'white', 'nonwhite']}
+            'color': [na_lab]}
 
     left_params = BOX_PARAMETERS['REGULAR']['LEFT']
     right_params = BOX_PARAMETERS['REGULAR']['RIGHT']
     # rounds = rounds[:3]
     num_frames = 0
-    for r in rounds:
+    num_sequences = 0
+    error_set = {(7432, 59.9),
+                 (7492, 59.9),
+                 (7088, 239.9),
+                 (7456, 169.9),
+                 (7088, 219.9),
+                 (7024, 109.9),
+                 (8007, 109.9),
+                 (7015, 39.9),
+                 }
+    with open(os.path.join(cnn_status_train_dir, 'rounds.txt'), 'w') as f:
+        for r in rounds:
+            # if r['id'] not in [x[0] for x in error_set]:
+            #    continue
 
-        for beg, end in r['sequences']:
-            expected_frame_count = int((end - beg) / time_step)
-            num_frames += (int(expected_frame_count) + 1) * 12
-    print(num_frames)
+            for beg, end in r['sequences']:
+                expected_frame_count = int((end - beg) / time_step)
+                num_frames += (int(expected_frame_count) + 1)
+                num_sequences += (int(expected_frame_count / frames_per_seq) + 1) * 12
+    print(num_sequences)
 
-    indexes = random.sample(range(num_frames), num_frames)
-    num_train = int(num_frames * 0.8)
-    num_val = num_frames - num_train
+    indexes = random.sample(range(num_sequences), num_sequences)
+    num_train = int(num_sequences * 0.8)
+    num_val = num_sequences - num_train
 
-    train_shape = (num_train, left_params['HEIGHT'], left_params['WIDTH'], 3)
-    val_shape = (num_val, left_params['HEIGHT'], left_params['WIDTH'], 3)
+    train_shape = (num_train, frames_per_seq, left_params['HEIGHT'], left_params['WIDTH'], 3)
+    val_shape = (num_val, frames_per_seq, left_params['HEIGHT'], left_params['WIDTH'], 3)
 
     hdf5_file = h5py.File(status_hd5_path, mode='w')
     for pre in ['train', 'val']:
@@ -695,48 +440,53 @@ def generate_data_for_player_cnn(rounds):
         hdf5_file.create_dataset("{}_round".format(pre), (num,), np.int32)
         hdf5_file.create_dataset("{}_time_point".format(pre), (num,), np.float32)
         for k in sets.keys():
-            hdf5_file.create_dataset("{}_{}_label".format(pre, k), (num,), np.int8)
-    #hdf5_file.create_dataset("train_mean", train_shape[1:], np.float32)
+            hdf5_file.create_dataset("{}_{}_label".format(pre, k), (num, frames_per_seq), np.int8)
+    # hdf5_file.create_dataset("train_mean", train_shape[1:], np.float32)
 
     mean = np.zeros(train_shape[1:], np.float32)
-    #error_set = {(7016, 261.6),
-    #             (7319, 442.8),
-    #             (7024, 157.8), (7024, 179.2)}
-    frame_ind = 0
+    sequence_ind = 0
+    sides = ['left', 'right']
     for round_index, r in enumerate(rounds):
-        #if r['id'] not in [x[0] for x in error_set]:
+        # if r['id'] not in [x[0] for x in error_set]:
         #    continue
         print(round_index, len(rounds))
         print(r['game']['match']['wl_id'], r['game']['game_number'], r['round_number'], r['id'])
         states = get_player_states(r['id'])
-        left_color = r['game']['left_team']['color']
-        if left_color == 'W':
-            left_color = 'white'
-        else:
-            left_color = 'nonwhite'
+        left_color = r['game']['left_team']['color'].lower()
+        if left_color not in sets['color']:
+            sets['color'].append(left_color)
 
-        right_color = r['game']['right_team']['color']
-        if right_color == 'W':
-            right_color = 'white'
-        else:
-            right_color = 'nonwhite'
+        right_color = r['game']['right_team']['color'].lower()
+        if right_color not in sets['color']:
+            sets['color'].append(right_color)
+
         for beg, end in r['sequences']:
             print(beg, end)
-            fvs = FileVideoStream(get_local_path(r), beg + r['begin'], end + r['begin'], time_step).start()
+            fvs = FileVideoStream(get_local_path(r), beg + r['begin'], end + r['begin'], time_step,
+                                  real_begin=r['begin']).start()
             timepackage.sleep(1.0)
-            time = beg
+
             print('begin main loop')
             begin_time = timepackage.time()
+            images = {}
+            data = {}
+            for side in sides:
+                for i in range(6):
+                    images[(side, i)] = np.zeros((frames_per_seq, left_params['HEIGHT'], left_params['WIDTH'], 3),
+                                                 dtype=np.uint8)
+                    data[(side, i)] = {}
 
+                    for k, s in sets.items():
+                        data[(side, i)][k] = np.zeros((frames_per_seq,), dtype=np.int8)
             j = 0
             while True:
                 try:
-                    frame = fvs.read()
+                    frame, time = fvs.read()
                 except Empty:
                     break
-                if frame_ind >= len(indexes):
+                if sequence_ind >= len(indexes):
                     print('ignoring')
-                    frame_ind += 1
+                    sequence_ind += 1
                     continue
                 time = round(time, 1)
                 for side in ['left', 'right']:
@@ -745,55 +495,84 @@ def generate_data_for_player_cnn(rounds):
                     else:
                         params = right_params
                     for player_ind in range(6):
-                        index = indexes[frame_ind]
-                        if index < num_train:
-                            pre = 'train'
-                        else:
-                            pre = 'val'
-                            index -= num_train
-                        if frame_ind != 0 and (frame_ind) % 1000 == 0 and frame_ind < num_train:
-                            print('Train data: {}/{}'.format(frame_ind, num_train))
-                        elif frame_ind != 0 and frame_ind % 1000 == 0:
-                            print('Validation data: {}/{}'.format(frame_ind - num_train, num_val))
-                        data = look_up_player_state(side, player_ind, time, states)
+                        d = look_up_player_state(side, player_ind, time, states)
                         if side == 'left':
-                            data['color'] = left_color
+                            d['color'] = left_color
                         else:
-                            data['color'] = right_color
+                            d['color'] = right_color
                         x = params['X']
                         y = params['Y']
                         x += (params['WIDTH'] + params['MARGIN']) * (player_ind)
                         box = frame[y: y + params['HEIGHT'],
                               x: x + params['WIDTH']]
-                        #if (r['id'], time) in error_set:
-                        #    print(r['id'], time)
-                        #    print(data)
-                        #    cv2.imshow('frame', box)
-                        #    cv2.waitKey(0)
+                        images[(side, player_ind)][j, ...] = box[None]
+                        for k, s in sets.items():
+                            if d[k] not in s:
+                                sets[k].append(d[k])
+                            data[(side, player_ind)][k][j] = sets[k].index(d[k])
+                        if (r['id'], time) in error_set and debug:  # and sequence_ind % 25 == 0:
+                            print(r['id'], time)
+                            print(d)
+                            cv2.imshow('frame_{}_{}'.format(side, player_ind), box)
+                            cv2.waitKey(0)
 
-                        hdf5_file["{}_img".format(pre)][index, ...] = box[None]
+                j += 1
+                if j == frames_per_seq:
+                    for side in ['left', 'right']:
+                        for player_ind in range(6):
+                            index = indexes[sequence_ind]
+                            if index < num_train:
+                                pre = 'train'
+                            else:
+                                pre = 'val'
+                                index -= num_train
+                            print(sequence_ind, num_sequences)
+                            if sequence_ind != 0 and (sequence_ind) % 100 == 0 and sequence_ind < num_train:
+                                print('Train data: {}/{}'.format(sequence_ind, num_train))
+                            elif sequence_ind != 0 and sequence_ind % 1000 == 0:
+                                print('Validation data: {}/{}'.format(sequence_ind - num_train, num_val))
+                            hdf5_file["{}_img".format(pre)][index, ...] = images[(side, player_ind)][None]
+                            images[(side, player_ind)] = np.zeros(
+                                (frames_per_seq, left_params['HEIGHT'], left_params['WIDTH'], 3), dtype=np.uint8)
+                            hdf5_file["{}_round".format(pre)][index] = r['id']
+                            hdf5_file["{}_time_point".format(pre)][index] = time
+                            for k, s in sets.items():
+                                hdf5_file['{}_{}_label'.format(pre, k)][index, ...] = data[(side, player_ind)][k][None]
+                                data[(side, player_ind)][k] = np.zeros((frames_per_seq,), dtype=np.int8)
+
+                            sequence_ind += 1
+                    j = 0
+
+                    # if pre == 'train':
+                    #    mean += box / num_train
+                # if (r['id'], time) in error_set:
+                #    error
+            if j > 0:
+                for side in ['left', 'right']:
+                    for player_ind in range(6):
+                        index = indexes[sequence_ind]
+                        if index < num_train:
+                            pre = 'train'
+                        else:
+                            pre = 'val'
+                            index -= num_train
+                        if sequence_ind != 0 and (sequence_ind) % 100 == 0 and sequence_ind < num_train:
+                            print('Train data: {}/{}'.format(sequence_ind, num_train))
+                        elif sequence_ind != 0 and sequence_ind % 1000 == 0:
+                            print('Validation data: {}/{}'.format(sequence_ind - num_train, num_val))
+                        hdf5_file["{}_img".format(pre)][index, ...] = images[(side, player_ind)][None]
+                        images[(side, player_ind)] = np.zeros(
+                            (frames_per_seq, left_params['HEIGHT'], left_params['WIDTH'], 3), dtype=np.uint8)
                         hdf5_file["{}_round".format(pre)][index] = r['id']
                         hdf5_file["{}_time_point".format(pre)][index] = time
                         for k, s in sets.items():
-                            if data[k] not in s:
-                                sets[k].append(data[k])
-                            hdf5_file['{}_{}_label'.format(pre, k)][index] = sets[k].index(data[k])
+                            hdf5_file['{}_{}_label'.format(pre, k)][index, ...] = data[(side, player_ind)][k][None]
+                            data[(side, player_ind)][k] = np.zeros((frames_per_seq,), dtype=np.int8)
+                        sequence_ind += 1
 
-                        #if pre == 'train':
-                        #    mean += box / num_train
-                        frame_ind += 1
-                        if debug and j % 25 == 0:
-                            print(time, side, player_ind)
-                            print(data)
-                            cv2.imshow('frame', box)
-                            cv2.waitKey(0)
-                #if (r['id'], time) in error_set:
-                #    error
-                time += time_step
-                j += 1
             print('main loop took', timepackage.time() - begin_time)
 
-    #hdf5_file["train_mean"][...] = mean
+    # hdf5_file["train_mean"][...] = mean
     hdf5_file.close()
     for k, v in set_files.items():
         with open(v, 'w', encoding='utf8') as f:
@@ -928,50 +707,25 @@ def construct_kf_at_time(events, time):
     possible_kf = []
     event_at_time = False
     for e in events:
-        first_color = 'white'
-        if e[2].lower() != 'white':
-            first_color = 'nonwhite'
-        second_color = 'white'
-        if e[6].lower() != 'white':
-            second_color = 'nonwhite'
-        if e[0] > time + 0.25:
+        if e['time_point'] > time + 0.25:
             break
-        elif e[0] > time:
-            possible_kf.insert(0, {'time_point': e[0],
-                                   'first_hero': 'n/a', 'first_color': first_color, 'ability': 'n/a', 'headshot': 'n/a',
+        elif e['time_point'] > time:
+            possible_kf.insert(0, {'time_point': e['time_point'],
+                                   'first_hero': 'n/a', 'first_color': 'n/a', 'ability': 'n/a', 'headshot': 'n/a',
                                    'second_hero': 'n/a',
-                                   'second_color': second_color, })
-        if time - window <= e[0] <= time:
-            if abs(time - e[0]) < 0.05:
+                                   'second_color': 'n/a', })
+        if time - window <= e['time_point'] <= time:
+            if abs(time - e['time_point']) < 0.05:
                 event_at_time = True
-            possible_kf.append({'time_point': e[0],
-                                'first_hero': e[1].lower(), 'first_color': first_color, 'ability': e[3].lower(),
-                                'headshot': str(e[4]).lower(), 'second_hero': e[5].lower(),
-                                'second_color': second_color})
+            for k, v in e.items():
+                if isinstance(v, str):
+                    e[k] = v.lower()
+                # if 'color' in k:
+                #    if e[k] != 'white':
+                #        e[k] = 'nonwhite'
+            possible_kf.append(e)
     possible_kf = sorted(possible_kf, key=lambda x: -1 * x['time_point'])
     return possible_kf[:6], event_at_time
-
-
-def event_at_time(events, time):
-    event = {'time_point': time,
-             'first_hero': 'n/a', 'first_color': 'n/a', 'ability': 'n/a',
-             'headshot': 'n/a', 'second_hero': 'n/a',
-             'second_color': 'n/a'}
-    for e in events:
-        if abs(time - e[0]) < 0.05:
-            first_color = 'white'
-            if e[2].lower() != 'white':
-                first_color = 'nonwhite'
-            second_color = 'white'
-            if e[6].lower() != 'white':
-                second_color = 'nonwhite'
-            event = {'time_point': e[0],
-                     'first_hero': e[1].lower(), 'first_color': first_color, 'ability': e[3].lower(),
-                     'headshot': str(e[4]).lower(), 'second_hero': e[5].lower(),
-                     'second_color': second_color}
-        if e[0] > time:
-            break
-    return event
 
 
 def generate_negative_kf_examples(r, events, number):
@@ -1031,7 +785,7 @@ def generate_data_for_kf_lstm(rounds):
 
     params = BOX_PARAMETERS['REGULAR']['KILL_FEED_SLOT']
     # calc params
-    #rounds = rounds[:3]
+    # rounds = rounds[:3]
     num_sequences = 0
     for r in rounds:
         for beg, end in r['sequences']:
@@ -1263,37 +1017,41 @@ def generate_data_for_kf_cnn(rounds):
         return
     print('beginning kf cnn data')
     na_lab = 'n/a'
-    # rounds = rounds[:3]
+    #rounds = rounds[:3]
     # rounds = rounds[2:]
     set_files = {'hero': os.path.join(cnn_kf_train_dir, 'hero_set.txt'),
                  'color': os.path.join(cnn_kf_train_dir, 'color_set.txt'),
                  'ability': os.path.join(cnn_kf_train_dir, 'ability_set.txt'),
                  'headshot': os.path.join(cnn_kf_train_dir, 'headshot_set.txt')}
-    sets = {}
-    for k in set_files.keys():
-        if k == 'hero':
-            sets[k] = [na_lab] + HERO_SET
-        elif k == 'ability':
-            sets[k] = [na_lab] + ABILITY_SET
-        else:
-            sets[k] = [na_lab]
+    labels = [na_lab, 'assisting_hero'] + HERO_SET + ABILITY_SET + COLOR_SET
+    print(labels)
+
     labs = ['first_hero', 'first_color', 'ability', 'headshot', 'second_hero', 'second_color']
-    time_step = 1
+    time_step = 0.1
     params = BOX_PARAMETERS['REGULAR']['KILL_FEED_SLOT']
     # calc params
     num_frames = 0
-    for r in rounds:
 
-        for beg, end in r['sequences']:
-            expected_frame_count = int((end - beg) / time_step)
-            num_frames += (int(expected_frame_count) + 1) * 6
+    events = {}
+    ranges = {}
+    with open(os.path.join(cnn_status_train_dir, 'rounds.txt'), 'w') as f:
+        for r in rounds:
+            f.write(str(r['id']) + '\n')
+            events[r['id']] = get_kf_events(r['id'])
+            ranges[r['id']] = get_event_ranges(events[r['id']], r['end'] - r['begin'])
+            for rd  in ranges[r['id']]:
+
+                expected_duration = rd['end'] - rd['begin']
+                expected_frame_count = expected_duration / time_step
+                num_frames += (int(expected_frame_count) + 1) * 6
+
     print(num_frames)
     indexes = random.sample(range(num_frames), num_frames)
     num_train = int(num_frames * 0.8)
     num_val = num_frames - num_train
 
-    train_shape = (num_train, params['HEIGHT'], params['WIDTH'], 3)
-    val_shape = (num_val, params['HEIGHT'], params['WIDTH'], 3)
+    train_shape = (num_train, params['WIDTH'], params['HEIGHT'],  3)
+    val_shape = (num_val, params['WIDTH'], params['HEIGHT'], 3)
 
     hdf5_file = h5py.File(kill_feed_hd5_path, mode='w')
     for pre in ['train', 'val']:
@@ -1305,103 +1063,134 @@ def generate_data_for_kf_cnn(rounds):
         hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8)
         hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int32)
         hdf5_file.create_dataset("{}_time_point".format(pre), (count,), np.float32)
-        for k in labs:
-            hdf5_file.create_dataset("{}_{}_label".format(pre, k), (count,), np.int8)
+        hdf5_file.create_dataset("{}_label".format(pre), (count, params['WIDTH']), np.int8)
 
-    hdf5_file.create_dataset("train_mean", train_shape[1:], np.float32)
-    mean = np.zeros(train_shape[1:], np.float32)
     frame_ind = 0
     for round_index, r in enumerate(rounds):
         print(round_index, len(rounds))
         print(r['game']['match']['wl_id'], r['game']['game_number'], r['round_number'], r['id'])
-        events = get_kf_events(r['id'])
-        # for e in events:
-        #    if e[3].lower() == 'coalescence':
-        #        print(e)
-        #        print(construct_kf_at_time(events, 91))
-        #        founderror
+        begin_time = timepackage.time()
+        fvs = FileVideoStreamRange(get_local_path(r), r['begin'], ranges[r['id']], time_step).start()
+        while True:
+            try:
+                frame, time_point = fvs.read()
+            except Empty:
+                break
 
-        # else:
-        #    continue
-        # found = False
-        for beg, end in r['sequences']:
-            print(beg, end)
-            fvs = FileVideoStream(get_local_path(r), beg + r['begin'], end + r['begin'], time_step).start()
-            timepackage.sleep(1.0)
-            time = beg
-            print('begin main loop')
-            begin_time = timepackage.time()
-            j = 0
-            while True:
-                try:
-                    frame = fvs.read()
-                except Empty:
-                    break
-                if frame_ind >= len(indexes):
-                    print('ignoring')
-                    frame_ind += 1
-                    continue
-                time = round(time, 1)
-                kf, e = construct_kf_at_time(events, time)
 
-                for i in range(6):
-                    index = indexes[frame_ind]
-                    if index < num_train:
-                        pre = 'train'
+            if frame_ind >= len(indexes):
+                print('ignoring')
+                frame_ind += 1
+                continue
+            time_point = round(time_point, 1)
+            kf, e = construct_kf_at_time(events[r['id']], time_point)
+
+            for slot in range(6):
+                index = indexes[frame_ind]
+                if index < num_train:
+                    pre = 'train'
+                else:
+                    pre = 'val'
+                    index -= num_train
+
+                if frame_ind != 0 and (frame_ind) % 100 == 0 and frame_ind < num_train:
+                    print('Train data: {}/{}'.format(frame_ind, num_train))
+                elif frame_ind != 0 and frame_ind % 1000 == 0:
+                    print('Validation data: {}/{}'.format(frame_ind - num_train, num_val))
+                x = params['X']
+                y = params['Y']
+                y += (params['HEIGHT'] + params['MARGIN']) * (slot)
+                box = frame[y: y + params['HEIGHT'],
+                      x: x + params['WIDTH']]
+
+                hdf5_file["{}_img".format(pre)][index, ...] = np.swapaxes(box, 1, 0)[None]
+                label_data = []
+                if slot > len(kf) - 1 or kf[slot]['second_hero'] == na_lab:
+                    label_data.append({'begin':0, 'end':params['WIDTH'], 'label': na_lab})
+                else:
+                    d = kf[slot]
+                    second_hero_left, second_hero_right = calculate_hero_boundaries(d['second_player'])
+
+                    ability_left, ability_right = calculate_ability_boundaries(second_hero_left, d['ability'])
+                    if d['first_player'] == 'n/a':
+                        first_hero_pos = -1
                     else:
-                        pre = 'val'
-                        index -= num_train
-                    if frame_ind != 0 and (frame_ind) % 1000 == 0 and frame_ind < num_train:
-                        print('Train data: {}/{}'.format(frame_ind, num_train))
-                    elif frame_ind != 0 and frame_ind % 1000 == 0:
-                        print('Validation data: {}/{}'.format(frame_ind - num_train, num_val))
+                        first_hero_left, first_hero_right = calculate_first_hero_boundaries(ability_left, len(
+                            d['assisting_heroes']))
+                        first_player_left, first_player_right = calculate_first_player_boundaries(first_hero_left, d['first_player'])
+                        first_hero_left = params['WIDTH'] - first_hero_left
+                        first_hero_right = params['WIDTH'] - first_hero_right
+                        if d['assisting_heroes']:
+                            assist_left, assist_right = calculate_assist_boundaries(ability_left, len(
+                                d['assisting_heroes']))
+                            assist_left = params['WIDTH'] - assist_left
+                            assist_right = params['WIDTH'] - assist_right
+                            label_data.append({'begin': assist_left, 'end': assist_right, 'label': 'assisting_hero'})
 
-                    x = params['X']
-                    y = params['Y']
-                    y += (params['HEIGHT'] + params['MARGIN']) * (i)
-                    box = frame[y: y + params['HEIGHT'],
-                          x: x + params['WIDTH']]
-                    if i > len(kf) - 1:
-                        d = {lab: 'n/a' for lab in labs}
-                    else:
-                        d = kf[i]
-                    for k in labs:
-                        if 'hero' in k:
-                            s = sets['hero']
-                        elif 'color' in k:
-                            s = sets['color']
+                            #cv2.imshow('frame_assist', box[:,assist_left: assist_right, :])
+                    second_hero_left = params['WIDTH'] - second_hero_left
+                    second_hero_right = params['WIDTH'] - second_hero_right
+                    ability_left = params['WIDTH'] - ability_left
+                    ability_right = params['WIDTH'] - ability_right
+
+                    label_data.append({'begin': second_hero_right, 'end': params['WIDTH'], 'label': d['second_color']}) # second name plate
+                    label_data.append({'begin': second_hero_left, 'end': second_hero_right, 'label': d['second_hero']})
+                    ability = d['ability']
+                    if d['headshot']:
+                        ability += '_headshot'
+                    label_data.append({'begin': ability_left, 'end': ability_right, 'label': ability})
+                    label_data.append({'begin': ability_right, 'end': ability_right+3, 'label': d['second_color']})
+
+                    if d['first_player'] != 'n/a':
+                        label_data.append({'begin': ability_left-3, 'end': ability_left, 'label': d['first_color']})
+                        first_player_left = params['WIDTH'] - first_player_left
+                        if first_player_left < 0:
+                            first_player_left = 0
                         else:
-                            s = sets[k]
-                        if d[k] not in s:
-                            s.append(d[k])
-                        hdf5_file['{}_{}_label'.format(pre, k)][index] = s.index(d[k])
-                    # if 100 > time > 90:
-                    #    print(d)
-                    #    print(index)
-                    hdf5_file["{}_img".format(pre)][index, ...] = box[None]
-                    hdf5_file["{}_round".format(pre)][index] = r['id']
-                    hdf5_file["{}_time_point".format(pre)][index] = time
-                    if debug and j % 25 == 0:
-                        cv2.imshow('frame_{}'.format(i), box)
+                            label_data.append({'begin': 0, 'end': first_player_left, 'label': na_lab})
+                        first_player_right = params['WIDTH'] - first_player_right
+                        if first_player_right > 0:
+                            label_data.append({'begin': first_player_left, 'end': first_hero_left, 'label': d['first_color']})
+                        if first_hero_left < 0:
+                            first_hero_left = 0
+                        label_data.append({'begin': first_hero_left, 'end': first_hero_right, 'label': d['first_hero']})
 
-                    if pre == 'train':
-                        mean += box / num_train
-                    frame_ind += 1
-                if debug and j % 25 == 0:
-                    print(time)
-                    for k in kf:
-                        print(k)
-                    cv2.waitKey(0)
-                time += time_step
-                j += 1
-            print('main loop took', timepackage.time() - begin_time)
 
-    hdf5_file["train_mean"][...] = mean
+                        #if first_player_left > 0:
+                        #    cv2.imshow('frame_na_part', box[:,:first_player_left , :])
+                        #cv2.imshow('frame_first_player', box[:,first_player_left: first_player_right, :])
+                    label_data = sorted(label_data, key = lambda x: x['begin'])
+                    for item in label_data:
+                        try:
+                            hdf5_file["{}_label".format(pre)][index, item['begin']:item['end']] = labels.index(item['label'])
+                        except ValueError:
+                            cv2.imshow('frame', box)
+                            print(label_data)
+                            cv2.waitKey(0)
+                            raise
+
+                    #cv2.imshow('frame', box)
+                    #cv2.imshow('frame_first_hero', box[:,first_hero_left: first_hero_right, :])
+                    #cv2.imshow('frame_second_hero', box[:,second_hero_left: second_hero_right, :])
+                    #cv2.imshow('frame_second_player', box[:,second_hero_right: , :])
+                    #cv2.imshow('frame_ability'   , box[:,ability_left: ability_right, :])
+                    #cv2.waitKey(0)
+
+
+                #if d['first_hero'] != 'n/a':
+                #    cv2.imshow('frame_{}'.format(slot), box)
+                #    print(first_hero_left, first_hero_right)
+                #    print(second_hero_left, second_hero_right)
+                #    print(ability_left, ability_right)
+                frame_ind += 1
+
+
+        print('main loop took', timepackage.time() - begin_time)
+
     hdf5_file.close()
-    for k, v in set_files.items():
-        with open(v, 'w', encoding='utf8') as f:
-            for p in sets[k]:
-                f.write('{}\n'.format(p))
+    with open(os.path.join(cnn_kf_train_dir, 'labels.txt'), 'w', encoding='utf8') as f:
+        for p in labels:
+            f.write('{}\n'.format(p))
 
 
 def generate_data_for_cnn(rounds):
@@ -1421,26 +1210,6 @@ def generate_data_for_lstm(rounds):
     generate_data_for_kf_lstm(rounds)
 
 
-def get_local_file(r):
-    match_directory = os.path.join(local_directory, str(r['game']['match']['wl_id']))
-    game_directory = os.path.join(match_directory, str(r['game']['game_number']))
-    import subprocess
-    vod_link = r['game']['vod_link']
-    match_vod_link = r['game']['match']['vod_link']
-    if vod_link == match_vod_link:
-        directory = match_directory
-        out_template = '{}.%(ext)s'.format(r['game']['match']['wl_id'])
-    else:
-        directory = game_directory
-        out_template = '{}.%(ext)s'.format(r['game']['game_number'])
-    print(vod_link)
-    if vod_link[0] == 'twitch':
-        template = 'https://www.twitch.tv/videos/{}'
-    subprocess.call(['youtube-dl', '-F', template.format(vod_link[1]), ], cwd=directory)
-    for f in ['720p', '720p30']:
-        subprocess.call(['youtube-dl', template.format(vod_link[1]), '-o', out_template, '-f', f], cwd=directory)
-
-
 def save_round_info(rounds):
     with open(os.path.join(training_data_directory, 'rounds.txt'), 'w') as f:
         for r in rounds:
@@ -1458,4 +1227,4 @@ if __name__ == '__main__':
 
     save_round_info(rounds)
     generate_data_for_cnn(rounds)
-    generate_data_for_lstm(rounds)
+    # generate_data_for_lstm(rounds)

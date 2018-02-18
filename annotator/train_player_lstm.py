@@ -8,6 +8,7 @@ import h5py
 
 working_dir = r'E:\Data\Overwatch\models\player_status_lstm'
 os.makedirs(working_dir, exist_ok=True)
+log_dir = os.path.join(working_dir, 'log')
 
 train_dir = r'E:\Data\Overwatch\training_data\player_status_lstm'
 hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
@@ -162,6 +163,7 @@ if __name__ == '__main__':
         filepath=current_model_path, verbose=1, save_best_only=True)
     early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=4, verbose=0,
                                                   mode='auto')
+    tensorboard = keras.callbacks.TensorBoard(log_dir=log_dir)
     print(gen.val_num // params['batch_size'])
     history = model.fit_generator(generator=training_generator,
                                   epochs=num_epochs,
@@ -170,7 +172,7 @@ if __name__ == '__main__':
                                   validation_data=validation_generator,
                                   validation_steps=gen.val_num // params['batch_size'],
                                   # validation_steps=100
-                                  callbacks=[checkpointer, early_stopper]
+                                  callbacks=[checkpointer, early_stopper, tensorboard]
                                   )
     final_output_weights = os.path.join(working_dir, 'player_weights.h5')
     final_output_json = os.path.join(working_dir, 'player_model.json')
@@ -178,23 +180,3 @@ if __name__ == '__main__':
     model_json = model.to_json()
     with open(final_output_json, "w") as json_file:
         json_file.write(model_json)
-    # list all data in history
-    print(history.history.keys())
-    import matplotlib.pyplot as plt
-
-    # summarize history for accuracy
-    plt.plot(history.history['hero_output_acc'])
-    plt.plot(history.history['val_hero_output_acc'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
-    # summarize history for loss
-    plt.plot(history.history['loss'])
-    plt.plot(history.history['val_loss'])
-    plt.title('model loss')
-    plt.ylabel('loss')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
