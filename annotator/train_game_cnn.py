@@ -8,28 +8,16 @@ import random
 
 from annotator.utils import BOX_PARAMETERS
 
-working_dir = r'E:\Data\Overwatch\models\mid_cnn'
+working_dir = r'E:\Data\Overwatch\models\game_cnn'
 os.makedirs(working_dir, exist_ok=True)
 
-train_dir = r'E:\Data\Overwatch\training_data\mid_cnn'
+train_dir = r'E:\Data\Overwatch\training_data\game_cnn'
 log_dir = os.path.join(working_dir, 'log')
 hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
 
 status_hd5_path = os.path.join(train_dir, 'dataset.hdf5')
 
-set_files = {
-             'overtime': os.path.join(train_dir, 'overtime_set.txt'),
-             'point_status': os.path.join(train_dir, 'point_set.txt'),
-             }
 
-end_set_files = {
-             'attacking_color': os.path.join(train_dir, 'color_set.txt'),
-             'map': os.path.join(train_dir, 'map_set.txt'),
-             'map_mode': os.path.join(train_dir, 'map_mode_set.txt'),
-        'round_number': os.path.join(train_dir, 'round_number_set.txt'),
-             'spectator_mode': os.path.join(train_dir, 'spectator_mode_set.txt'),
-
-}
 def load_set(path):
     ts = []
     with open(path, 'r', encoding='utf8') as f:
@@ -37,26 +25,9 @@ def load_set(path):
             ts.append(line.strip())
     return ts
 
+labels = load_set(os.path.join(train_dir, 'labels.txt'))
 
-sets = {}
-for k, v in set_files.items():
-    sets[k] = load_set(v)
-
-end_sets = {}
-for k, v in end_set_files.items():
-    end_sets[k] = load_set(v)
-
-class_counts = {}
-for k, v in sets.items():
-    class_counts[k] = len(v)
-
-end_class_counts = {}
-for k, v in end_sets.items():
-    end_class_counts[k] = len(v)
-
-#spectator_modes = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
-
-#spectator_mode_count = len(spectator_modes)
+label_count = len(labels)
 
 def sparsify(y, n_classes):
     'Returns labels in binary NumPy array'
@@ -119,17 +90,13 @@ class DataGenerator(object):
         #input['spectator_mode_input'] = sparsify_2d(self.hdf5_file["{}_spectator_mode_label".format(pre)][i_s:i_e, ...], spectator_mode_count)
         #sample_weights = {}
         output = {}
-        for k, count in class_counts.items():
-            output_name = '{}_output'.format(k)
-            output[output_name] = sparsify_2d(self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e], count)
+        output_name = 'label_output'
+        output[output_name] = sparsify_2d(self.hdf5_file["{}_label".format(pre)][i_s:i_e], label_count)
             #sample_weights[output_name] = np.ones((i_e-i_s,100))
             #for i in range(sample_weights[output_name].shape[0]):
             #    for j in range(sample_weights[output_name].shape[1]):
             #        sample_weights[output_name][i, j] = class_weights[k][self.hdf5_file["{}_{}_label".format(pre, k)][i+i_s, j]]
 
-        for k, count in end_class_counts.items():
-            output_name = '{}_output'.format(k)
-            output[output_name] = sparsify(self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e], count)
         #for i in range(input['main_input'].shape[0]):
         #    for k, s in sets.keys():
         #        print(k, s[self.hdf5_file["{}_{}_label".format(pre, k)][i_s+1]])
@@ -234,7 +201,7 @@ if __name__ == '__main__':
     from keras.models import Sequential, Model
     from keras.layers import Conv2D, MaxPooling2D, Flatten, Dropout, Dense, Input, TimeDistributed, CuDNNGRU
 
-    input_shape = (100, int(BOX_PARAMETERS['O']['MID']['HEIGHT'] * 0.3), int(BOX_PARAMETERS['O']['MID']['WIDTH'] * 0.3), 3)
+    input_shape = (100, int(BOX_PARAMETERS['O']['MID']['HEIGHT'] * 0.5), int(BOX_PARAMETERS['O']['MID']['WIDTH'] * 0.5), 3)
     params = {'dim_x': 140,
               'dim_y': 300,
               'dim_z': 3,
@@ -251,19 +218,11 @@ if __name__ == '__main__':
     validation_generator = gen.generate_val()
     print('set up complete')
     # Design model
-    final_output_weights = os.path.join(working_dir, 'mid_weights.h5')
-    final_output_json = os.path.join(working_dir, 'mid_model.json')
-
-    class_weights = {}
-    for k, v in class_counts.items():
-        output_name = k + '_output'
-        y_train = gen.hdf5_file['train_{}_label'.format(k)]
-        unique, counts = np.unique(y_train, return_counts=True)
-        counts = dict(zip(unique, counts))
-        class_weights[k] = create_class_weight(counts)
+    final_output_weights = os.path.join(working_dir, 'game_weights.h5')
+    final_output_json = os.path.join(working_dir, 'game_model.json')
 
     if not os.path.exists(final_output_json):
-        current_model_path = os.path.join(working_dir, 'current_mid_model.hdf5')
+        current_model_path = os.path.join(working_dir, 'current_game_model.hdf5')
         if not os.path.exists(current_model_path):
             main_input = Input(shape=input_shape, name='main_input')
             x = TimeDistributed(Conv2D(64, kernel_size=(3, 3), strides=(1, 1),
@@ -279,23 +238,21 @@ if __name__ == '__main__':
             x = TimeDistributed(Dropout(0.25))(x)
             x = TimeDistributed(Flatten())(x)
 
-            x = TimeDistributed(Dense(512, activation='relu', name='representation'))(x)
+            x = TimeDistributed(Dense(50, activation='relu', name='representation'))(x)
             frame_output = TimeDistributed(Dropout(0.5))(x)
             #spectator_mode_input = Input(shape=(100, spectator_mode_count,), name='spectator_mode_input')
             #x = keras.layers.concatenate([frame_output, spectator_mode_input])
-            x = CuDNNGRU(128, return_sequences=True)(frame_output)
-            x = CuDNNGRU(128, return_sequences=True)(x)
-            seq_x = CuDNNGRU(128)(x)
+            x = CuDNNGRU(64, return_sequences=True)(x)
+            x = CuDNNGRU(64, return_sequences=True)(x)
+            x = CuDNNGRU(64, return_sequences=True)(x)
 
             outputs = []
-            for k, count in class_counts.items():
-                outputs.append(TimeDistributed(Dense(count, activation='softmax'), name=k + '_output')(x))
-            for k, count in end_class_counts.items():
-                outputs.append(Dense(count, activation='softmax', name=k + '_output')(seq_x))
+            outputs.append(TimeDistributed(Dense(label_count, activation='softmax'), name='label_output')(x))
             model = Model(inputs=[main_input], outputs=outputs)
 
             model.summary()
             model.compile(loss=keras.losses.categorical_crossentropy,
+                          sample_weight_mode='temporal',
                           optimizer=keras.optimizers.Adadelta(),
                           metrics=['accuracy'])
             print('model compiled')

@@ -8,6 +8,7 @@ from queue import Queue, Empty
 import cv2
 
 local_directory = r'E:\Data\Overwatch\raw_data\annotations\matches'
+vod_directory = r'E:\Data\Overwatch\raw_data\vods'
 
 site_url = 'http://localhost:8000/'
 
@@ -15,23 +16,23 @@ api_url = site_url + 'annotator/api/'
 
 
 def get_local_file(r):
-    match_directory = os.path.join(local_directory, str(r['game']['match']['wl_id']))
-    game_directory = os.path.join(match_directory, str(r['game']['game_number']))
-    import subprocess
-    vod_link = r['game']['vod_link']
-    match_vod_link = r['game']['match']['vod_link']
-    if vod_link == match_vod_link:
-        directory = match_directory
-        out_template = '{}.%(ext)s'.format(r['game']['match']['wl_id'])
-    else:
-        directory = game_directory
-        out_template = '{}.%(ext)s'.format(r['game']['game_number'])
+    directory = vod_directory
+    vod_link = r['stream_vod']['vod_link']
+    out_template = '{}.%(ext)s'.format(r['stream_vod']['id'])
     print(vod_link)
     if vod_link[0] == 'twitch':
         template = 'https://www.twitch.tv/videos/{}'
     subprocess.call(['youtube-dl', '-F', template.format(vod_link[1]), ], cwd=directory)
     for f in ['720p', '720p30']:
         subprocess.call(['youtube-dl', template.format(vod_link[1]), '-o', out_template, '-f', f], cwd=directory)
+
+
+def get_local_vod(v):
+    directory = vod_directory
+    out_template = '{}.%(ext)s'.format(v['id'])
+    subprocess.call(['youtube-dl', '-F', v['url'], ], cwd=directory)
+    for f in ['720p', '720p30']:
+        subprocess.call(['youtube-dl', v['url'], '-o', out_template, '-f', f], cwd=directory)
 
 
 def calculate_hero_boundaries(player_name):
@@ -64,11 +65,13 @@ def calculate_first_hero_boundaries(left_ability_boundary, num_assists):
     left_boundary = right_boundary + PLATE_PORTRAIT_WIDTH
     return left_boundary, right_boundary
 
+
 def calculate_assist_boundaries(left_ability_boundary, num_assists):
     assist_width = PLATE_ASSIST_WIDTH * num_assists + PLATE_ASSIST_MARGIN * num_assists
     assist_right = left_ability_boundary + PLATE_LEFT_MARGIN
     assist_left = assist_right + assist_width
     return assist_left, assist_right
+
 
 def calculate_first_player_boundaries(left_hero_boundary, player_name):
     value = 0
@@ -121,71 +124,191 @@ CHAR_VALUES = {'a': 6,
                'default': 6
                }
 
-
+stage_2_shift = 25
 
 BOX_PARAMETERS = {
-    'REGULAR': {
+    'O': {
         'MID': {
-            'HEIGHT': 140,
-            'WIDTH': 300,
-            'X': 490,
-            'Y': 45},
-
+            'X': 520,
+            'Y': 35,
+            'HEIGHT': 84,
+            'WIDTH': 240,
+        },
         'KILL_FEED': {
-            'Y': 115,
-            'X': 1020,
-            'WIDTH': 210,
-            'HEIGHT': 205
+            'X': 1280 - 20 - 250,
+            'Y': 112,
+            'WIDTH': 256,
+            'HEIGHT': 256
         },
         'KILL_FEED_SLOT': {
-            'Y': 115,
-            'X': 1280- 20 - 250,
-            'WIDTH': 250,
-            'HEIGHT': 26,
-            'MARGIN': 9
+            'X': 1280 - 20 - 248,
+            'Y': 112,
+            'WIDTH': 248,
+            'HEIGHT': 32,
+            'MARGIN': 3
         },
         'LEFT': {
-            'Y': 40,
-            'X': 30,
-            'WIDTH': 67,
-            'HEIGHT': 67,
-            'MARGIN': 4,
+            'X': 34,
+            'Y': 42,
+            'WIDTH': 64,
+            'HEIGHT': 64,
+            'MARGIN': 6,
         },
         'RIGHT': {
-            'Y': 40,
             'X': 830,
-            'WIDTH': 67,
-            'HEIGHT': 67,
-            'MARGIN': 4,
+            'Y': 42,
+            'WIDTH': 64,
+            'HEIGHT': 64,
+            'MARGIN': 6,
+        },
+        'REPLAY': {
+            'X': 105,
+            'Y': 110,
+            'WIDTH': 210,
+            'HEIGHT': 60,
+        },
+        'PAUSE': {
+            'X': 550,
+            'Y': 310,
+            'WIDTH': 150,
+            'HEIGHT': 40,
         }
-    },
-    'APEX': {  # Black borders around video feed
-        'MID': {
-            'HEIGHT': 140,
-            'WIDTH': 300,
-            'X': 490,
-            'Y': 45},
+    }}
 
-        'KILL_FEED': {
-            'Y': 115,
-            'X': 950,
-            'WIDTH': 270,
-            'HEIGHT': 205
-        },
-        'LEFT': {
-            'Y': 45,
-            'X': 51,
-            'WIDTH': 67,
-            'HEIGHT': 55,
-            'MARGIN': 1,
-        },
-        'RIGHT': {
-            'Y': 45,
-            'X': 825,
-            'WIDTH': 67,
-            'HEIGHT': 55,
-            'MARGIN': 1,
-        }
+BOX_PARAMETERS['W'] = {
+    'MID': {
+        'X': 520,
+        'Y': 34,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+    },
+    'KILL_FEED': {
+        'X': 1280 - 20 - 248,
+        'Y': 112,
+        'WIDTH': 256,
+        'HEIGHT': 256
+    },
+    'KILL_FEED_SLOT': {
+        'X': 1280 - 20 - 248,
+        'Y': 112,
+        'WIDTH': 248,
+        'HEIGHT': 32,
+        'MARGIN': 2
+    },
+    'LEFT': {
+        'X': 34,
+        'Y': 42,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 6,
+    },
+    'RIGHT': {
+        'X': 830,
+        'Y': 42,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 6,
+    },
+    'REPLAY': {
+        'X': 125,
+        'Y': 165,
+        'WIDTH': 210,
+        'HEIGHT': 60,
+    },
+    'PAUSE': {
+        'X': 550,
+        'Y': 300,
+        'WIDTH': 190,
+        'HEIGHT': 70,
+    }
+}
+
+BOX_PARAMETERS['2'] = {
+    'MID': {
+        'X': 520,
+        'Y': 60,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+    },
+    'KILL_FEED': {
+        'X': 1280 - 20 - 248,
+        'Y': 136,
+        'WIDTH': 248,
+        'HEIGHT': 256
+    },
+    'KILL_FEED_SLOT': {
+        'X': 1280 - 20 - 248,
+        'Y': 136,
+        'WIDTH': 248,
+        'HEIGHT': 32,
+        'MARGIN': 2
+    },
+    'LEFT': {
+        'X': 36,
+        'Y': 67,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 7,
+    },
+    'RIGHT': {
+        'X': 827,
+        'Y': 67,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 7,
+    },
+    'REPLAY': {
+        'X': 145,
+        'Y': 150,
+        'WIDTH': 210,
+        'HEIGHT': 60,
+    },
+    'PAUSE': {
+        'X': 530,
+        'Y': 300,
+        'WIDTH': 210,
+        'HEIGHT': 80,
+    }
+}
+
+BOX_PARAMETERS['A'] = {  # Black borders around video feed
+    'MID': {
+        'X': 490,
+        'Y': 45,
+        'HEIGHT': 84,
+        'WIDTH': 230,
+    },
+    'KILL_FEED': {
+        'X': 950,
+        'Y': 115,
+        'WIDTH': 270,
+        'HEIGHT': 205
+    },
+    'LEFT': {
+        'X': 51,
+        'Y': 45,
+        'WIDTH': 67,
+        'HEIGHT': 55,
+        'MARGIN': 1,
+    },
+    'RIGHT': {
+        'X': 825,
+        'Y': 45,
+        'WIDTH': 67,
+        'HEIGHT': 55,
+        'MARGIN': 1,
+    },
+    'REPLAY': {
+        'X': 115,
+        'Y': 120,
+        'WIDTH': 150,
+        'HEIGHT': 40,
+    },
+    'PAUSE': {
+        'X': 550,
+        'Y': 300,
+        'WIDTH': 190,
+        'HEIGHT': 70,
     }
 }
 
@@ -196,8 +319,26 @@ def get_train_rounds():
     return r.json()
 
 
+def get_train_rounds_plus():
+    url = api_url + 'train_rounds_plus/'
+    r = requests.get(url)
+    return r.json()
+
+
+def get_train_vods():
+    url = api_url + 'train_vods/'
+    r = requests.get(url)
+    return r.json()
+
+
 def get_annotate_rounds():
     url = api_url + 'annotate_rounds/'
+    r = requests.get(url)
+    return r.json()
+
+
+def get_annotate_vods():
+    url = api_url + 'annotate_vods/'
     r = requests.get(url)
     return r.json()
 
@@ -230,15 +371,41 @@ def get_hero_list():
     r = requests.get(url)
     return sorted(set(x['name'].lower() for x in r.json()))
 
+
+def get_player_list():
+    url = api_url + 'train_players/'
+    r = requests.get(url)
+    return sorted(set(x['name'].lower() for x in r.json()))
+
+
 def get_color_list():
     url = api_url + 'team_colors/'
     r = requests.get(url)
     return sorted(set(x.lower() for x in r.json()))
 
+
+def get_spectator_modes():
+    url = api_url + 'spectator_modes/'
+    r = requests.get(url)
+    return sorted(set(x['name'].lower() for x in r.json()))
+
+
+def get_maps():
+    url = api_url + 'maps/'
+    r = requests.get(url)
+    return sorted(set(x['name'].lower() for x in r.json()))
+
+
 def get_npc_list():
     url = api_url + 'npcs/'
     r = requests.get(url)
     return sorted(set(x['name'].lower() for x in r.json()))
+
+
+def get_map_modes():
+    url = api_url + 'map_modes/'
+    r = requests.get(url)
+    return sorted(set(x.lower() for x in r.json()))
 
 
 def get_ability_list():
@@ -249,7 +416,7 @@ def get_ability_list():
     for a in resp:
         ability_set.add(a['name'].lower())
         if a['headshot_capable']:
-            ability_set.add(a['name'].lower() + '_headshot')
+            ability_set.add(a['name'].lower() + ' headshot')
     url = api_url + 'abilities/reviving_abilities/'
     r = requests.get(url)
     resp = r.json()
@@ -257,29 +424,66 @@ def get_ability_list():
         ability_set.add(a['name'].lower())
     return ability_set
 
+def upload_game(data):
+    url = api_url + 'games/'
+    print(data)
+    resp = requests.post(url, json=data)
+    if resp.status_code != 200:
+        raise Exception
+    print(resp)
+
 
 def update_annotations(data, round_id):
-    to_send = {}
-    for k, v in data.items():
+    to_send = {'player_states': {},
+               'kill_feed': data['kill_feed'],
+               'replays': data['replays'],
+               'pauses': data['pauses'],
+               'ignore_switches': data['ignore_switches']
+               }
+    for k, v in data['player'].items():
         k = '{}_{}'.format(*k)
-        to_send[k] = {}
+        to_send['player_states'][k] = {}
         switches = v.generate_switches()
         ug, uu = v.generate_ults()
 
-        to_send[k]['switches'] = switches
-        to_send[k]['ult_gains'] = ug
-        to_send[k]['ult_uses'] = uu
+        to_send['player_states'][k]['switches'] = switches
+        to_send['player_states'][k]['ult_gains'] = ug
+        to_send['player_states'][k]['ult_uses'] = uu
     url = api_url + 'annotate_rounds/{}/'.format(round_id)
     print(to_send)
     resp = requests.put(url, json=to_send)
+    if resp.status_code != 200:
+        raise Exception
     print(resp)
 
+def get_character_set(player_set):
+    chars = set()
+    for p in player_set:
+        chars.update(p)
+    return sorted(chars)
+
+MAP_SET = get_maps()
 
 HERO_SET = get_hero_list() + get_npc_list()
 
 ABILITY_SET = sorted(get_ability_list())
 
 COLOR_SET = get_color_list()
+
+SPECTATOR_MODES = get_spectator_modes()
+
+PLAYER_SET = get_player_list()
+
+PLAYER_CHARACTER_SET = get_character_set(PLAYER_SET)
+
+MAP_MODE_SET = get_map_modes()
+
+
+def get_vod_path(v):
+    print(v)
+    vod_path = os.path.join(vod_directory, '{}.mp4'.format(v['id']))
+    return vod_path
+
 
 def get_local_path(r):
     match_directory = os.path.join(local_directory, str(r['game']['match']['wl_id']))
@@ -387,7 +591,7 @@ class FileVideoStreamRange:
                 # otherwise, ensure the queue has room in it
                 if not self.Q.full():
                     # read the next frame from the file
-                    frame_number = int(round((time_point + self.begin) * self.fps))
+                    frame_number = int(round(round(time_point + self.begin, 1) * self.fps))
                     self.stream.set(1, frame_number)
                     (grabbed, frame) = self.stream.read()
                     # if the `grabbed` boolean is `False`, then we have
@@ -429,6 +633,8 @@ class FileVideoStream:
         self.stopped = False
         self.begin = begin
         self.end = end
+        if self.end == 0:
+            self.end = self.stream.get(cv2.CAP_PROP_FRAME_COUNT) / self.fps
         self.time_step = time_step
         self.real_begin = real_begin
 
@@ -446,6 +652,7 @@ class FileVideoStream:
     def update(self):
         # keep looping infinitely
         time_point = self.begin
+        frame_ind = 0
         while True:
             # if the thread indicator variable is set, stop the
             # thread
@@ -458,6 +665,7 @@ class FileVideoStream:
                 frame_number = int(round(time_point * self.fps))
                 self.stream.set(1, frame_number)
                 (grabbed, frame) = self.stream.read()
+
                 # if the `grabbed` boolean is `False`, then we have
                 # reached the end of the video file
                 if not grabbed:
@@ -469,9 +677,9 @@ class FileVideoStream:
                     beg = self.real_begin
                 else:
                     beg = self.begin
-                self.Q.put((frame, time_point - beg))
+                self.Q.put((frame, round(time_point - beg, 1)))
                 time_point += self.time_step
-                time_point = round(time_point, 1)
+                frame_ind += 1
                 if time_point > self.end:
                     self.stop()
                     return
@@ -493,13 +701,13 @@ class FileVideoStream:
 
 
 def get_event_ranges(events, end):
-    window = 7.3
+    window = 8
     ranges = []
     for e in events:
         if not ranges or e['time_point'] > ranges[-1]['end']:
-            ranges.append({'begin': e['time_point'], 'end': e['time_point'] + window})
+            ranges.append({'begin': e['time_point'], 'end': round(e['time_point'] + window, 1)})
         elif e['time_point'] <= ranges[-1]['end']:
-            ranges[-1]['end'] = e['time_point'] + window
+            ranges[-1]['end'] = round(e['time_point'] + window, 1)
     if ranges[-1]['end'] > end:
         ranges[-1]['end'] = end
     print(ranges)
