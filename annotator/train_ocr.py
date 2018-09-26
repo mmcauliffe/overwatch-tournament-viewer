@@ -17,12 +17,12 @@ import pylab
 from sklearn.utils import class_weight
 import keras
 
-working_dir = r'E:\Data\Overwatch\models\player_ocr_ctc'
+working_dir = r'E:\Data\Overwatch\models\player_ocr'
 os.makedirs(working_dir, exist_ok=True)
 
-train_dir = r'E:\Data\Overwatch\training_data\player_status_cnn'
+train_dir = r'E:\Data\Overwatch\training_data\player_ocr'
 log_dir = os.path.join(working_dir, 'log')
-hdf5_path = os.path.join(train_dir, 'ocr_dataset.hdf5')
+hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
 
 
 def load_set(path):
@@ -33,9 +33,21 @@ def load_set(path):
     return ts
 
 
-characters = load_set(os.path.join(train_dir, 'characters.txt'))
+characters = load_set(os.path.join(train_dir, 'labels_set.txt'))
 
 class_count = len(characters)
+
+spectator_modes = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
+
+spectator_mode_count = len(spectator_modes)
+
+colors = load_set(os.path.join(train_dir, 'color_set.txt'))
+
+color_count = len(colors)
+
+alives = load_set(os.path.join(train_dir, 'alive_set.txt'))
+
+alive_count = len(alives)
 
 def sparsify(y, n_classes):
     'Returns labels in binary NumPy array'
@@ -84,6 +96,20 @@ class DataGenerator(object):
 
         input['the_labels'] = self.hdf5_file["{}_label_sequence".format(pre)][i_s:i_e, ...]
         input['label_length'] = np.reshape(self.hdf5_file["{}_label_sequence_length".format(pre)][i_s:i_e], (-1, 1))
+        input['spectator_mode_input'] = np.zeros((i_e-i_s, (img_w // (pool_size ** 2)), spectator_mode_count))
+        m = sparsify(self.hdf5_file["{}_spectator_mode_label".format(pre)][i_s:i_e], spectator_mode_count)
+        for i in range((img_w // (pool_size ** 2))):
+            input['spectator_mode_input'][:,i, :] = m
+
+        input['alive_input'] = np.zeros((i_e-i_s, (img_w // (pool_size ** 2)), alive_count))
+        m = sparsify(self.hdf5_file["{}_alive_label".format(pre)][i_s:i_e], alive_count)
+        for i in range((img_w // (pool_size ** 2))):
+            input['alive_input'][:,i, :] = m
+
+        input['color_input'] = np.zeros((i_e-i_s, (img_w // (pool_size ** 2)), color_count))
+        m = sparsify(self.hdf5_file["{}_color_label".format(pre)][i_s:i_e], color_count)
+        for i in range((img_w // (pool_size ** 2))):
+            input['color_input'][:,i, :] = m
 
         for i in range(input['the_labels'].shape[0]):
             if input['label_length'][i] == 0:
@@ -136,7 +162,7 @@ def check_val_errors(model, gen):
         i_s = i * gen.batch_size  # index of the first image in this batch
         i_e = min([(i + 1) * gen.batch_size, gen.val_num])  # index of the last image in this batch
         X, y = gen._data_generation(i_s, i_e, train=False)
-        decoded_res = decode_batch(test_func, X['the_input'])
+        decoded_res = decode_batch(test_func, X['the_input'], X['spectator_mode_input'])
         print(decoded_res)
         preds = model.predict_on_batch(X)
         print(len(preds))
@@ -189,6 +215,7 @@ def check_train_errors(model, gen):
                     cv2.imshow('frame', X[t_ind, ...])
                     cv2.waitKey(0)
 
+
 def create_class_weight(labels_dict,mu=0.5):
     total = np.sum(np.array(list(labels_dict.values())))
     keys = labels_dict.keys()
@@ -199,6 +226,7 @@ def create_class_weight(labels_dict,mu=0.5):
         class_weight[key] = score if score > 1.0 else 1.0
     return class_weight
 
+
 def ctc_lambda_func(args):
     ls, y_pred, input_length, label_length = args
 
@@ -206,6 +234,7 @@ def ctc_lambda_func(args):
     # tend to be garbage:
     y_pred = y_pred[:, 2:, :]
     return K.ctc_batch_cost(ls, y_pred, input_length, label_length)
+
 
 def labels_to_text(ls):
     ret = []
@@ -215,8 +244,9 @@ def labels_to_text(ls):
         ret.append(characters[c])
     return ret
 
-def decode_batch(test_func, word_batch):
-    out = test_func([word_batch])[0]
+
+def decode_batch(test_func, word_batch, spec_batch):
+    out = test_func([word_batch, spec_batch])
     ret = []
     for j in range(out.shape[0]):
         out_best = list(np.argmax(out[j, 2:], 1))
@@ -225,9 +255,9 @@ def decode_batch(test_func, word_batch):
         ret.append(outstr)
     return ret
 
-class VizCallback(keras.callbacks.Callback):
 
-    def __init__(self, run_name, test_func, text_img_gen, num_display_words=6):
+class VizCallback(keras.callbacks.Callback):
+    def __init__(self, run_name, test_func, text_img_gen, num_display_words=18):
         self.test_func = test_func
         self.output_dir = os.path.join(
             working_dir, run_name)
@@ -243,7 +273,7 @@ class VizCallback(keras.callbacks.Callback):
         while num_left > 0:
             word_batch = next(self.text_img_gen)[0]
             num_proc = min(word_batch['the_input'].shape[0], num_left)
-            decoded_res = decode_batch(self.test_func, word_batch['the_input'][0:num_proc])
+            decoded_res = decode_batch(self.test_func, word_batch['the_input'][0:num_proc], word_batch['spectator_mode_input'][0:num_proc])
             for j in range(num_proc):
                 ref = [characters[x] for x in word_batch['the_labels'][j] if x < len(characters)]
                 edit_dist = editdistance.eval(decoded_res[j], ref)
@@ -262,7 +292,7 @@ class VizCallback(keras.callbacks.Callback):
         self.model.save_weights(os.path.join(self.output_dir, 'weights%02d.h5' % (epoch)))
         self.show_edit_distance(256)
         word_batch = next(self.text_img_gen)[0]
-        res = decode_batch(self.test_func, word_batch['the_input'][0:self.num_display_words])
+        res = decode_batch(self.test_func, word_batch['the_input'][0:self.num_display_words], word_batch['spectator_mode_input'][0:self.num_display_words])
         if word_batch['the_input'][0].shape[0] < 256:
             cols = 2
         else:
@@ -298,7 +328,7 @@ if __name__ == '__main__':
     import keras.callbacks
 
     run_name = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-    input_shape = (64, 12, 1)
+    input_shape = (64, 12, 3)
     img_w = 64
     img_h = 12
     params = {'dim_x': 32,
@@ -364,6 +394,10 @@ if __name__ == '__main__':
 
             # cuts down input size going into RNN:
             inner = Dense(time_dense_size, activation=act, name='dense1')(inner)
+            spectator_mode_input = Input(shape=(img_w // (pool_size ** 2), spectator_mode_count,), name='spectator_mode_input')
+            alive_input = Input(shape=(img_w // (pool_size ** 2), alive_count,), name='alive_input')
+            color_input = Input(shape=(img_w // (pool_size ** 2), color_count,), name='color_input')
+            inner = keras.layers.concatenate([inner, spectator_mode_input, alive_input, color_input])
 
             # Two layers of bidirectional GRUs
             # GRU seems to work as well, if not better than LSTM:
@@ -383,7 +417,6 @@ if __name__ == '__main__':
             inner = Dense(class_count+1, kernel_initializer='he_normal',
                           name='dense2')(inner)
             y_pred = Activation('softmax', name='softmax')(inner)
-            Model(inputs=input_data, outputs=y_pred).summary()
 
             labels_input = Input(name='the_labels', shape=[12], dtype='float32')
             input_length = Input(name='input_length', shape=[1], dtype='uint8')
@@ -396,7 +429,7 @@ if __name__ == '__main__':
             # clipnorm seems to speeds up convergence
             sgd = SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
 
-            model = Model(inputs=[input_data, labels_input, input_length, label_length], outputs=loss_out)
+            model = Model(inputs=[input_data, spectator_mode_input, alive_input, color_input, labels_input, input_length, label_length], outputs=loss_out)
 
             model.summary()
             model.compile(loss={'ctc': lambda y_true, y_pred: y_pred},
@@ -408,11 +441,13 @@ if __name__ == '__main__':
         # Train model on dataset
         checkpointer = keras.callbacks.ModelCheckpoint(
             filepath=current_model_path, verbose=1, save_best_only=True)
-        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=5, verbose=0,
+        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=2, verbose=0,
                                                       mode='auto')
         tensorboard = keras.callbacks.TensorBoard(log_dir=log_dir)
 
-        test_func = K.function([input_data], [y_pred])
+        embedding_model = keras.models.Model(inputs=[model.input[0],model.input[1],model.input[2],model.input[3]],
+                                             outputs=[model.get_layer('softmax').output])
+        test_func = embedding_model.predict_on_batch
 
         viz_cb = VizCallback(run_name, test_func, validation_generator)
         history = model.fit_generator(generator=training_generator,

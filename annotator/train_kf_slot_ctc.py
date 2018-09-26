@@ -13,10 +13,10 @@ import pylab
 from sklearn.utils import class_weight
 import keras
 
-working_dir = r'E:\Data\Overwatch\models\kf_slot_ctc'
+working_dir = r'E:\Data\Overwatch\models\kill_feed_ctc'
 os.makedirs(working_dir, exist_ok=True)
 
-train_dir = r'E:\Data\Overwatch\training_data\kf_slot_ctc'
+train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
 log_dir = os.path.join(working_dir, 'log')
 hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
 
@@ -29,7 +29,7 @@ def load_set(path):
     return ts
 
 
-labels = load_set(os.path.join(train_dir, 'labels.txt'))
+labels = load_set(os.path.join(train_dir, 'labels_set.txt'))
 spectator_modes = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
 
 class_count = len(labels)
@@ -92,8 +92,8 @@ class DataGenerator(object):
         input['label_length'] = np.reshape(self.hdf5_file["{}_label_sequence_length".format(pre)][i_s:i_e], (-1, 1))
         input['input_length'] = np.zeros((i_e - i_s, 1))
         input['input_length'][:] = img_w // downsample_factor - 2
-        input['round'] = self.hdf5_file['{}_round'.format(pre)][i_s:i_e]
-        input['time_point'] = self.hdf5_file['{}_time_point'.format(pre)][i_s:i_e]
+        #input['round'] = self.hdf5_file['{}_round'.format(pre)][i_s:i_e]
+        #input['time_point'] = self.hdf5_file['{}_time_point'.format(pre)][i_s:i_e]
         if debug:
             for i in range(input['the_input'].shape[0]):
                 print(input['spectator_mode_input'][i])
@@ -105,8 +105,15 @@ class DataGenerator(object):
                 cv2.waitKey(0)
 
         outputs = {'ctc': np.zeros([i_e - i_s])}  # dummy data for dummy loss function
-
-        return input, outputs
+        sample_weights = np.ones([i_e - i_s])
+        for i in range(i_e - i_s):
+            weight = [label_weights[x] for x in input['the_labels'][i] if x != len(labels)]
+            if not weight:
+                weight = 1
+            else:
+                weight = np.mean(weight)
+            sample_weights[i] = weight
+        return input, outputs, sample_weights
 
     def generate_train(self):
         'Generates batches of samples'
@@ -118,8 +125,8 @@ class DataGenerator(object):
             for n, i in enumerate(batches_list):
                 i_s = i * self.batch_size  # index of the first image in this batch
                 i_e = min([(i + 1) * self.batch_size, self.data_num])  # index of the last image in this batch
-                X, y = self._data_generation(i_s, i_e)
-                yield X, y
+                X, y, weights = self._data_generation(i_s, i_e)
+                yield X, y, weights
 
     def generate_val(self):
         'Generates batches of samples'
@@ -131,7 +138,7 @@ class DataGenerator(object):
             for n, i in enumerate(batches_list):
                 i_s = i * self.batch_size  # index of the first image in this batch
                 i_e = min([(i + 1) * self.batch_size, self.val_num])  # index of the last image in this batch
-                X, y = self._data_generation(i_s, i_e, train=False)
+                X, y,_ = self._data_generation(i_s, i_e, train=False)
                 yield X, y
 
 
@@ -143,7 +150,7 @@ def check_val_errors(model, gen):
     for n, i in enumerate(batches_list):
         i_s = i * gen.batch_size  # index of the first image in this batch
         i_e = min([(i + 1) * gen.batch_size, gen.val_num])  # index of the last image in this batch
-        X, y = gen._data_generation(i_s, i_e, train=False)
+        X, y, _ = gen._data_generation(i_s, i_e, train=False)
         res = decode_batch(model.predict_on_batch, X['the_input'], X['spectator_mode_input'])
         print(res)
 
@@ -201,6 +208,7 @@ def create_class_weight(labels_dict, mu=0.5):
     class_weight = dict()
 
     for key in keys:
+
         score = math.log(mu * total / float(labels_dict[key]))
         class_weight[key] = score if score > 1.0 else 1.0
     return class_weight
@@ -222,8 +230,8 @@ def labels_to_text(ls):
         ret.append(labels[c])
     return ret
 
-def decode_batch(test_func, word_batch, spec_batch):
-    out = test_func([word_batch, spec_batch])
+def decode_batch(model, word_batch, spec_batch):
+    out = model.predict_on_batch([word_batch, spec_batch])
     ret = []
     for j in range(out.shape[0]):
         out_best = list(np.argmax(out[j, 2:], 1))
@@ -232,8 +240,8 @@ def decode_batch(test_func, word_batch, spec_batch):
         ret.append(outstr)
     return ret
 
-class VizCallback(keras.callbacks.Callback):
 
+class VizCallback(keras.callbacks.Callback):
     def __init__(self, run_name, test_func, text_img_gen, num_display_words=18):
         self.test_func = test_func
         self.output_dir = os.path.join(
@@ -315,6 +323,14 @@ if __name__ == '__main__':
     final_output_weights = os.path.join(working_dir, 'kf_weights.h5')
     final_output_json = os.path.join(working_dir, 'kf_model.json')
 
+    y_train = gen.hdf5_file['train_label_sequence']
+    unique, counts = np.unique(y_train, return_counts=True)
+    counts = dict(zip(unique, counts))
+    del counts[len(labels)]
+    print(counts)
+    print({k: v / sum(counts.values()) for k,v in counts.items()})
+    label_weights = create_class_weight(counts)
+    print(label_weights)
     img_w = input_shape[-3]
     img_h = input_shape[-2]
     pool_size = 2
@@ -391,7 +407,7 @@ if __name__ == '__main__':
         # Train model on dataset
         checkpointer = keras.callbacks.ModelCheckpoint(
             filepath=current_model_path, verbose=1, save_best_only=True)
-        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=5, verbose=0,
+        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=2, verbose=0,
                                                       mode='auto')
         tensorboard = keras.callbacks.TensorBoard(log_dir=log_dir)
 

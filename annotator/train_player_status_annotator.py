@@ -7,22 +7,23 @@ import numpy as np
 import h5py
 
 
-working_dir = r'E:\Data\Overwatch\models\player_status_cnn'
+working_dir = r'E:\Data\Overwatch\models\player_status'
 os.makedirs(working_dir, exist_ok=True)
 log_dir = os.path.join(working_dir, 'log')
 TEST = True
-train_dir = r'E:\Data\Overwatch\training_data\player_status_cnn'
+train_dir = r'E:\Data\Overwatch\training_data\player_status'
 hdf5_path = os.path.join(train_dir, 'dataset.hdf5')
 
 
 set_files = {#'player': os.path.join(train_dir, 'player_set.txt'),
              'hero': os.path.join(train_dir, 'hero_set.txt'),
-             'color': os.path.join(train_dir, 'color_set.txt'),
              'alive': os.path.join(train_dir, 'alive_set.txt'),
              'ult': os.path.join(train_dir, 'ult_set.txt'),
              #'spectator': os.path.join(train_dir, 'spectator_set.txt'),
              }
-
+end_set_files = {
+             'color': os.path.join(train_dir, 'color_set.txt'),
+}
 
 def load_set(path):
     ts = []
@@ -35,14 +36,25 @@ def load_set(path):
 sets = {}
 for k, v in set_files.items():
     sets[k] = load_set(v)
+end_sets = {}
+for k, v in end_set_files.items():
+    end_sets[k] = load_set(v)
 
 class_counts = {}
 for k, v in sets.items():
     class_counts[k] = len(v)
 
+end_class_counts = {}
+for k, v in end_sets.items():
+    end_class_counts[k] = len(v)
+
 spectator_modes = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
 
 spectator_mode_count = len(spectator_modes)
+
+sides = load_set(os.path.join(train_dir, 'side_set.txt'))
+
+side_count = len(sides)
 
 def sparsify(y, n_classes):
     'Returns labels in binary NumPy array'
@@ -112,17 +124,24 @@ class DataGenerator(object):
                 i_e -= train_num
         input = {}
         input['main_input'] = self.hdf5_file["{}_img".format(pre)][i_s:i_e, ...]
+
         input['spectator_mode_input'] = np.zeros((i_e-i_s, 100, spectator_mode_count))
-        m = sparsify(self.hdf5_file["{}_spectator_mode".format(pre)][i_s:i_e], spectator_mode_count)
-        for i in range(i_e-i_s):
-            input['spectator_mode_input'][i, :] = m[i]
+        m = sparsify(self.hdf5_file["{}_spectator_mode_label".format(pre)][i_s:i_e], spectator_mode_count)
+        for i in range(100):
+            input['spectator_mode_input'][:,i, :] = m
+        input['side_input'] = sparsify_2d(self.hdf5_file["{}_side_label".format(pre)][i_s:i_e], side_count)
         #print(images.shape)
-        #for i in range(images.shape[0]):
-        #    for k, s in sets.items():
-        #        print(k, s[self.hdf5_file["{}_{}_label".format(pre, k)][i_s+i, 0]])
-        #    print(self.hdf5_file['{}_round'.format(pre)][i_s+i], self.hdf5_file['{}_time_point'.format(pre)][i_s+i])
-        #    cv2.imshow('frame', images[i, 0, :])
-        #    cv2.waitKey(0)
+        #for i in range(input['main_input'].shape[0]):
+        #    for j in range(input['main_input'].shape[1]):
+        #        print('spectator_mode', spectator_modes[self.hdf5_file["{}_spectator_mode_label".format(pre)][i_s+i,j]])
+        #        print('side', sides[self.hdf5_file["{}_side_label".format(pre)][i_s+i,j]])
+        #        for k, s in sets.items():
+        #            print(k, s[self.hdf5_file["{}_{}_label".format(pre, k)][i_s+i, j]])
+        #        for k, s in end_sets.items():
+        #            print(k, s[self.hdf5_file["{}_{}_label".format(pre, k)][i_s+i]])
+        #        print(self.hdf5_file['{}_round'.format(pre)][i_s+i], self.hdf5_file['{}_time_point'.format(pre)][i_s+i])
+        #        cv2.imshow('frame', input['main_input'][i, j, :])
+        #        cv2.waitKey(0)
 
         #print(hero_set[self.hdf5_file["{}_hero_label".format(pre)][i_s]])
         #cv2.imshow('frame', images[0, :])
@@ -133,12 +152,21 @@ class DataGenerator(object):
         sample_weights = {}
         for k, count in class_counts.items():
             output_name = k + '_output'
-            sample_weights[output_name] = class_weights[k]
-            sample_weights[output_name] = np.ones((i_e-i_s,100))
-            for i in range(sample_weights[output_name].shape[0]):
-                for j in range(sample_weights[output_name].shape[1]):
-                    sample_weights[output_name][i] = class_weights[k][self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e][i, j]]
+            #sample_weights[output_name] = np.ones((i_e-i_s,100))
+            #for i in range(sample_weights[output_name].shape[0]):
+            #    for j in range(sample_weights[output_name].shape[1]):
+            #        sample_weights[output_name][i] = class_weights[k][self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e][i, j]]
             output['{}_output'.format(k)] = sparsify_2d(self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e], count)
+
+        for k, count in end_class_counts.items():
+            output_name = k + '_output'
+            #output[output_name] = np.zeros((i_e-i_s,100, count))
+            #sample_weights[output_name] = np.ones((i_e-i_s,100))
+            #for i in range(output[output_name].shape[0]):
+            #    sample_weights[output_name][i] = end_class_weights[k][self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e][i]]
+            #    for j in range(output[output_name].shape[1]):
+            #        output['{}_output'.format(k)][i][j] = sparsify(self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e], count)[i]
+            output['{}_output'.format(k)] = sparsify(self.hdf5_file["{}_{}_label".format(pre, k)][i_s:i_e], count)
         return input, output, sample_weights
 
     def generate_train(self):
@@ -188,14 +216,14 @@ def check_val_errors(model, gen):
                     cnn_inds = preds[output_ind].argmax(axis=2)
                     cnn_label = s[cnn_inds[t_ind, j_ind]]
                     actual_label = s[y['{}_output'.format(output_key)][t_ind, j_ind].argmax(axis=0)]
-                    print(output_key, actual_label)
-                    if False and cnn_label != actual_label:
+                    #print(output_key, actual_label)
+                    if cnn_label != actual_label:
                         print(output_key)
                         print(cnn_label, actual_label)
                         cv2.imshow('frame', X['main_input'][t_ind, j_ind, ...])
                         cv2.waitKey(0)
-                cv2.imshow('frame', X['main_input'][t_ind, j_ind, ...])
-                cv2.waitKey(0)
+                #cv2.imshow('frame', X['main_input'][t_ind, j_ind, ...])
+                #cv2.waitKey(0)
 
 def create_class_weight(labels_dict,mu=0.5):
     total = np.sum(np.array(list(labels_dict.values())))
@@ -216,7 +244,7 @@ if __name__ == '__main__':
     params = {'dim_x': 64,
               'dim_y': 64,
               'dim_z': 3,
-              'batch_size': 8,
+              'batch_size': 6,
               'shuffle': True,
               'subtract_mean':False}
     num_epochs = 40
@@ -238,37 +266,53 @@ if __name__ == '__main__':
         unique, counts = np.unique(y_train, return_counts=True)
         counts = dict(zip(unique, counts))
         class_weights[k] = create_class_weight(counts)
+    end_class_weights = {}
+    for k, v in end_class_counts.items():
+        output_name = k + '_output'
+        y_train = gen.hdf5_file['train_{}_label'.format(k)]
+        unique, counts = np.unique(y_train, return_counts=True)
+        counts = dict(zip(unique, counts))
+        end_class_weights[k] = create_class_weight(counts)
 
     # Design model
     current_model_path = os.path.join(working_dir, 'current_player_model.hdf5')
     if not os.path.exists(final_output_json):
         if not os.path.exists(current_model_path):
             main_input = Input(shape=input_shape, name='main_input')
-            x = TimeDistributed(Conv2D(64, kernel_size=(3, 3), strides=(1, 1),
+            x = TimeDistributed(Conv2D(32, kernel_size=(3, 3), strides=(1, 1),
                        activation='relu'))(main_input)
+            x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
+            x = TimeDistributed(Dropout(0.25))(x)
             x = TimeDistributed(Conv2D(64, kernel_size=(3, 3), strides=(1, 1),
                        activation='relu'))(x)
             x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
             x = TimeDistributed(Dropout(0.25))(x)
-            x = TimeDistributed(Conv2D(128, (3, 3), activation='relu'))(x)
-            x = TimeDistributed(Conv2D(128, (3, 3), activation='relu'))(x)
-            x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
 
-            x = TimeDistributed(Dropout(0.25))(x)
+            #x = TimeDistributed(Conv2D(128, (3, 3), activation='relu'))(x)
+            #x = TimeDistributed(Conv2D(128, (3, 3), activation='relu'))(x)
+            #x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
+            #x = TimeDistributed(Dropout(0.25))(x)
+
             x = TimeDistributed(Flatten())(x)
             #x = TimeDistributed(Dense(50, activation='relu'))(x)
             x = TimeDistributed(Dense(100, activation='relu', name='representation'))(x)
             frame_output = TimeDistributed(Dropout(0.5))(x)
             spectator_mode_input = Input(shape=(100, spectator_mode_count,), name='spectator_mode_input')
-            x = keras.layers.concatenate([frame_output, spectator_mode_input])
-            x = CuDNNGRU(64, return_sequences=True)(x)
-            x = CuDNNGRU(64, return_sequences=True)(x)
-            x = CuDNNGRU(64, return_sequences=True)(x)
+            side_input = Input(shape=(100, side_count,), name='side_input')
+            x = keras.layers.concatenate([frame_output, spectator_mode_input, side_input])
+            x = CuDNNGRU(128, return_sequences=True)(x)
+            x = CuDNNGRU(128, return_sequences=True)(x)
+            seq_x = CuDNNGRU(128)(x)
+            #seq_x = CuDNNGRU(128)(x)
 
             outputs = []
             for k, count in class_counts.items():
                 outputs.append(TimeDistributed(Dense(count, activation='softmax'), name=k + '_output')(x))
-            model = Model(inputs=[main_input, spectator_mode_input], outputs=outputs)
+
+            for k, count in end_class_counts.items():
+                outputs.append(Dense(count, activation='softmax', name=k + '_output')(seq_x))
+                #outputs.append(TimeDistributed(Dense(count, activation='softmax'), name=k + '_output')(x))
+            model = Model(inputs=[main_input, spectator_mode_input, side_input], outputs=outputs)
             model.summary()
             model.compile(loss=keras.losses.categorical_crossentropy,
                           optimizer=keras.optimizers.Adadelta(),

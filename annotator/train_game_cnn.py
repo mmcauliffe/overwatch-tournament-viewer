@@ -261,7 +261,7 @@ if __name__ == '__main__':
         # Train model on dataset
         checkpointer = keras.callbacks.ModelCheckpoint(
             filepath=current_model_path, verbose=1, save_best_only=True)
-        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=5, verbose=0,
+        early_stopper = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.01, patience=2, verbose=0,
                                                       mode='auto')
         tensorboard = keras.callbacks.TensorBoard(log_dir=log_dir)
         history = model.fit_generator(generator=training_generator,

@@ -126,6 +126,17 @@ CHAR_VALUES = {'a': 6,
 
 stage_2_shift = 25
 
+## Player boundary guidelines
+
+# Aligned to nameplate, left is top left corner of nameplate
+
+# Top margin = Bottom margin
+
+PLAYER_WIDTH = 64
+PLAYER_HEIGHT = 64
+KILL_FEED_WIDTH = 248
+KILL_FEED_HEIGHT = 32
+
 BOX_PARAMETERS = {
     'O': {
         'MID': {
@@ -148,18 +159,18 @@ BOX_PARAMETERS = {
             'MARGIN': 3
         },
         'LEFT': {
-            'X': 34,
-            'Y': 42,
+            'X': 29,
+            'Y': 41,
             'WIDTH': 64,
             'HEIGHT': 64,
-            'MARGIN': 6,
+            'MARGIN': 7,
         },
         'RIGHT': {
-            'X': 830,
-            'Y': 42,
+            'X': 832,
+            'Y': 41,
             'WIDTH': 64,
             'HEIGHT': 64,
-            'MARGIN': 6,
+            'MARGIN': 7,
         },
         'REPLAY': {
             'X': 105,
@@ -174,6 +185,54 @@ BOX_PARAMETERS = {
             'HEIGHT': 40,
         }
     }}
+
+BOX_PARAMETERS['K'] = {
+    'MID': {
+        'X': 520,
+        'Y': 43,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+    },
+    'KILL_FEED': {
+        'X': 1280 - 20 - 248 - 20,
+        'Y': 120,
+        'WIDTH': 248,
+        'HEIGHT': 256
+    },
+    'KILL_FEED_SLOT': {
+        'X': 1280 - 20 - 248 - 20,
+        'Y': 120,
+        'WIDTH': 248,
+        'HEIGHT': 32,
+        'MARGIN': 1
+    },
+    'LEFT': {
+        'X': 46,
+        'Y': 49,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 5,
+    },
+    'RIGHT': {
+        'X': 827,
+        'Y': 49,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 4,
+    },
+    'REPLAY': {
+        'X': 105,
+        'Y': 110 + 13,
+        'WIDTH': 210,
+        'HEIGHT': 60,
+    },
+    'PAUSE': {
+        'X': 550,
+        'Y': 310 + 13,
+        'WIDTH': 150,
+        'HEIGHT': 40,
+    }
+}
 
 BOX_PARAMETERS['W'] = {
     'MID': {
@@ -196,18 +255,18 @@ BOX_PARAMETERS['W'] = {
         'MARGIN': 2
     },
     'LEFT': {
-        'X': 34,
-        'Y': 42,
+        'X': 29,
+        'Y': 41,
         'WIDTH': 64,
         'HEIGHT': 64,
-        'MARGIN': 6,
+        'MARGIN': 7,
     },
     'RIGHT': {
-        'X': 830,
-        'Y': 42,
+        'X': 832,
+        'Y': 41,
         'WIDTH': 64,
         'HEIGHT': 64,
-        'MARGIN': 6,
+        'MARGIN': 7,
     },
     'REPLAY': {
         'X': 125,
@@ -244,7 +303,7 @@ BOX_PARAMETERS['2'] = {
         'MARGIN': 2
     },
     'LEFT': {
-        'X': 36,
+        'X': 31,
         'Y': 67,
         'WIDTH': 64,
         'HEIGHT': 64,
@@ -312,9 +371,24 @@ BOX_PARAMETERS['A'] = {  # Black borders around video feed
     }
 }
 
+for k, f in BOX_PARAMETERS.items():
+    for s in ['LEFT', 'RIGHT']:
+        BOX_PARAMETERS[k]['{}_NAME'.format(s)] = {'X': f[s]['X'],
+                                                  'Y': f[s]['Y'] + 34,
+                                                  'WIDTH': f[s]['WIDTH'],
+                                                  'HEIGHT': 12,
+                                                  'MARGIN': f[s]['MARGIN'],
+                                                  }
+
 
 def get_train_rounds():
     url = api_url + 'train_rounds/'
+    r = requests.get(url)
+    return r.json()
+
+
+def get_example_rounds():
+    url = api_url + 'example_rounds/'
     r = requests.get(url)
     return r.json()
 
@@ -424,6 +498,7 @@ def get_ability_list():
         ability_set.add(a['name'].lower())
     return ability_set
 
+
 def upload_game(data):
     url = api_url + 'games/'
     print(data)
@@ -456,11 +531,13 @@ def update_annotations(data, round_id):
         raise Exception
     print(resp)
 
+
 def get_character_set(player_set):
     chars = set()
     for p in player_set:
         chars.update(p)
     return sorted(chars)
+
 
 MAP_SET = get_maps()
 
@@ -480,7 +557,6 @@ MAP_MODE_SET = get_map_modes()
 
 
 def get_vod_path(v):
-    print(v)
     vod_path = os.path.join(vod_directory, '{}.mp4'.format(v['id']))
     return vod_path
 
@@ -634,7 +710,7 @@ class FileVideoStream:
         self.begin = begin
         self.end = end
         if self.end == 0:
-            self.end = self.stream.get(cv2.CAP_PROP_FRAME_COUNT) / self.fps
+            self.end = int(self.stream.get(cv2.CAP_PROP_FRAME_COUNT) / self.fps) - 5
         self.time_step = time_step
         self.real_begin = real_begin
 
@@ -663,9 +739,11 @@ class FileVideoStream:
             if not self.Q.full():
                 # read the next frame from the file
                 frame_number = int(round(time_point * self.fps))
+                if frame_number >= self.stream.get(cv2.CAP_PROP_FRAME_COUNT):
+                    self.stop()
+                    return
                 self.stream.set(1, frame_number)
                 (grabbed, frame) = self.stream.read()
-
                 # if the `grabbed` boolean is `False`, then we have
                 # reached the end of the video file
                 if not grabbed:
@@ -680,7 +758,7 @@ class FileVideoStream:
                 self.Q.put((frame, round(time_point - beg, 1)))
                 time_point += self.time_step
                 frame_ind += 1
-                if time_point > self.end:
+                if time_point >= self.end:
                     self.stop()
                     return
 
