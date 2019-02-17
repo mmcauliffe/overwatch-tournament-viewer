@@ -6,7 +6,7 @@ import h5py
 import math
 import random
 
-from annotator.utils import BOX_PARAMETERS
+from annotator.config import BOX_PARAMETERS
 
 working_dir = r'E:\Data\Overwatch\models\game_cnn'
 os.makedirs(working_dir, exist_ok=True)
@@ -143,21 +143,19 @@ def check_val_errors(model, gen):
         X, y = gen._data_generation(i_s, i_e, train=False)
         print(X['main_input'].shape)
         preds = model.predict_on_batch(X)
-        for output_ind, (output_key, s) in enumerate(sets.items()):
-            print(preds[output_ind].shape)
-            cnn_inds = preds[output_ind].argmax(axis=2)
-            print(cnn_inds.shape)
-            for t_ind in range(X['main_input'].shape[0]):
-                for j in range(X['main_input'].shape[1]):
-                    cnn_label = s[cnn_inds[t_ind, j]]
-                    actual_label = s[y['{}_output'.format(output_key)][t_ind, j].argmax(axis=0)]
-                    if cnn_label != actual_label:
-                        print(output_key)
-                        print(cnn_label, actual_label)
-                        time_point = gen.hdf5_file['val_time_point'][i_s+t_ind] + j * 0.1
-                        print(gen.hdf5_file['val_round'][i_s+t_ind], time.strftime('%M:%S', time.gmtime(time_point)), gen.hdf5_file['val_time_point'][i_s+t_ind], time_point)
-                        cv2.imshow('frame', X['main_input'][t_ind, j,  ...])
-                        cv2.waitKey(0)
+        print(preds.shape)
+        cnn_inds = preds.argmax(axis=2)
+        print(cnn_inds.shape)
+        for t_ind in range(X['main_input'].shape[0]):
+            for j in range(X['main_input'].shape[1]):
+                cnn_label = labels[cnn_inds[t_ind, j]]
+                actual_label = labels[y['label_output'][t_ind, j].argmax(axis=0)]
+                if cnn_label != actual_label:
+                    print(cnn_label, actual_label)
+                    time_point = gen.hdf5_file['val_time_point'][i_s+t_ind] + j * 0.1
+                    print('vod', gen.hdf5_file['val_vod'][i_s+t_ind], time.strftime('%M:%S', time.gmtime(time_point)), gen.hdf5_file['val_time_point'][i_s+t_ind], time_point)
+                    cv2.imshow('frame', X['main_input'][t_ind, j,  ...])
+                    cv2.waitKey(0)
 
 
 def check_train_errors(model, gen):

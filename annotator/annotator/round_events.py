@@ -8,6 +8,12 @@ import itertools
 import time
 from collections import defaultdict, Counter
 
+from annotator.config import na_lab, sides, BOX_PARAMETERS
+from annotator.game_values import HERO_SET, COLOR_SET, ABILITY_SET, HERO_ONLY_SET
+from annotator.utils import get_local_vod, \
+    get_local_path,  FileVideoStream, Empty, get_vod_path
+from annotator.api_requests import get_annotate_vods_round_events, upload_annotated_round_events
+
 working_dir = r'E:\Data\Overwatch\models'
 player_model_dir = os.path.join(working_dir, 'player_status')
 player_ocr_model_dir = os.path.join(working_dir, 'player_ocr')
@@ -20,15 +26,7 @@ oi_annotation_dir = r'E:\Data\Overwatch\oi_annotations'
 
 time_step = 0.1
 frames_per_seq = 100
-debug = True
-
-from annotator.utils import get_annotate_rounds, get_local_path, get_local_file, update_annotations, BOX_PARAMETERS, \
-    HERO_SET, ABILITY_SET, COLOR_SET, FileVideoStream, Empty, get_annotate_vods, get_vod_path, get_local_vod, \
-    upload_game
-
-hero_set = ['ana', 'bastion', 'd.va', 'doomfist', 'genji', 'hanzo', 'junkrat', 'lúcio', 'mccree', 'mei', 'mercy',
-            'moira', 'orisa', 'pharah', 'reaper', 'reinhardt', 'roadhog', 'soldier: 76', 'sombra', 'symmetra',
-            'torbjörn', 'tracer', 'widowmaker', 'winston', 'zarya', 'zenyatta']
+debug = False
 
 ability_mapping = {'ana': ['biotic grenade', 'sleep dart', ],
                    'bastion': ['configuration: tank', ],
@@ -75,7 +73,8 @@ def load_set(path):
 class KillFeedAnnotator(object):
     time_step = 0.1
 
-    def __init__(self, model_directory, film_format, spectator_mode, debug=False):
+    def __init__(self, model_directory, film_format, spectator_mode, debug=False, half_npc_slots=False):
+        self.half_npc_slots = half_npc_slots
         self.model_directory = model_directory
         label_path = os.path.join(self.model_directory, 'labels_set.txt')
         self.label_set = load_set(label_path)
@@ -86,17 +85,17 @@ class KillFeedAnnotator(object):
             loaded_model_json = f.read()
         model = keras.models.model_from_json(loaded_model_json)
         model.load_weights(final_output_weights)
-        self.model = keras.models.Model(inputs=[model.input[0], model.input[1]],
+        self.model = keras.models.Model(inputs=[model.input[0]],
                                              outputs=[model.get_layer('softmax').output])
 
-        self.spectator_modes = load_set(os.path.join(self.model_directory, 'spectator_mode_set.txt'))
-        self.spectator_mode_count = len(self.spectator_modes)
+        #self.spectator_modes = load_set(os.path.join(self.model_directory, 'spectator_mode_set.txt'))
+        #self.spectator_mode_count = len(self.spectator_modes)
         self.kill_feed = []
 
         self.params = BOX_PARAMETERS[film_format]['KILL_FEED_SLOT']
 
         self.shape = (6, self.params['WIDTH'], self.params['HEIGHT'], 3)
-        self.spectator_mode_input = self._format_spec_mode_input(6, spectator_mode)
+        #self.spectator_mode_input = self._format_spec_mode_input(6, spectator_mode)
 
         if self.debug:
             self.caps = {}
@@ -107,19 +106,57 @@ class KillFeedAnnotator(object):
                                                 (self.params['WIDTH'], self.params['HEIGHT']))
 
     def process_frame(self, frame, time_point):
-        to_predicts = np.zeros(self.shape, dtype=np.uint8)
-        for slot in range(6):
-            x = self.params['X']
-            y = self.params['Y']
-            y += (self.params['HEIGHT'] + self.params['MARGIN']) * (slot)
-            box = frame[y: y + self.params['HEIGHT'],
-                  x: x + self.params['WIDTH']]
+        if self.half_npc_slots:
+            shift = 0
+            cur_kf = {}
+            for slot in range(6):
+                to_predicts = np.zeros(self.shape, dtype=np.uint8)
+                for slot in range(6):
+                    x = self.params['X']
+                    y = self.params['Y']
+                    y += (self.params['HEIGHT'] + self.params['MARGIN']) * (slot)
+                    box = frame[y - shift: y + self.params['HEIGHT'] - shift,
+                          x: x + self.params['WIDTH']]
+                    #cv2.imshow('slot_{}'.format(slot), box)
+                    if self.debug:
+                        self.caps[slot].write(box)
+                    to_predicts[0, ...] = np.swapaxes(box, 1, 0)[None]
+                    out = self.model.predict_on_batch([to_predicts])
+                    s = self.convert_kf_ctc_output(out[0])
+                    if s['second_hero'] == 'n/a' and s['second_color'] == 'n/a':
+                        break
+                    if s['second_hero'] != 'n/a':
+                        cur_kf[slot] = s
+                        if s['second_hero'] not in HERO_ONLY_SET + ['b.o.b.']:
+                            shift += int(self.params['HEIGHT'] / 4) + 5
+            self.kill_feed.append({'time_point': time_point, 'slots': cur_kf})
+            #if cur_kf:
+            #    print(cur_kf)
+            #    cv2.waitKey()
+
+        else:
+            to_predicts = np.zeros(self.shape, dtype=np.uint8)
+            for slot in range(6):
+                x = self.params['X']
+                y = self.params['Y']
+                y += (self.params['HEIGHT'] + self.params['MARGIN']) * (slot)
+                box = frame[y: y + self.params['HEIGHT'],
+                      x: x + self.params['WIDTH']]
+                if self.debug:
+                    self.caps[slot].write(box)
+                to_predicts[slot, ...] = np.swapaxes(box, 1, 0)[None]
+            self.annotate(to_predicts, time_point)
             if self.debug:
-                self.caps[slot].write(box)
-            to_predicts[slot, ...] = np.swapaxes(box, 1, 0)[None]
-        self.annotate(to_predicts, time_point)
-        if self.debug:
-            self.cap.write(frame)
+                self.cap.write(frame)
+
+    def annotate(self, to_predicts, time_point):
+        cur_kf = {}
+        out = self.model.predict_on_batch([to_predicts])
+        for slot in range(6):
+            s = self.convert_kf_ctc_output(out[slot])
+            if s['second_hero'] != 'n/a':
+                cur_kf[slot] = s
+        self.kill_feed.append({'time_point': time_point, 'slots': cur_kf})
 
     def cleanup(self):
         if self.debug:
@@ -190,14 +227,8 @@ class KillFeedAnnotator(object):
                 data['second_hero'] = i
         return data
 
-    def annotate(self, to_predicts, time_point):
-        cur_kf = {}
-        out = self.model.predict_on_batch([to_predicts, self.spectator_mode_input])
-        for slot in range(6):
-            s = self.convert_kf_ctc_output(out[slot])
-            if s['second_hero'] != 'n/a':
-                cur_kf[slot] = s
-        self.kill_feed.append({'time_point': time_point, 'slots': cur_kf})
+    def generate_death_events(self):
+        pass
 
     def generate_kill_events(self, left_team, right_team):
         left_color = left_team.color
@@ -245,7 +276,7 @@ class KillFeedAnnotator(object):
                     dying_team = right_team
 
                 # check if it's a hero or npc
-                if e['second_hero'] in hero_set:
+                if e['second_hero'] in HERO_SET:
                     if not dying_team.has_hero_at_time(e['second_hero'], k['time_point']):
                         continue
                     if e['ability'] != 'resurrect' and dying_team.alive_at_time(e['second_hero'], k['time_point']):
@@ -462,22 +493,26 @@ class MidAnnotator(object):
         return out_props
 
 
-
-
-
 class PlayerAnnotator(object):
     time_step = 0.1
 
-    def __init__(self, model_directory, ocr_directory, film_format, spectator_mode, debug=False):
+    def __init__(self, model_directory, ocr_directory, film_format, spectator_mode, left_team_color, right_team_color, player_names, debug=False):
         self.model_directory = model_directory
         self.debug = debug
+        self.left_team_color = left_team_color
+        self.right_team_color = right_team_color
+        self.player_names = player_names
         player_set_files = {
             'hero': os.path.join(self.model_directory, 'hero_set.txt'),
             'alive': os.path.join(self.model_directory, 'alive_set.txt'),
             'ult': os.path.join(self.model_directory, 'ult_set.txt'),
+             #'antiheal': os.path.join(model_directory, 'antiheal_set.txt'),
+             #'asleep': os.path.join(model_directory, 'asleep_set.txt'),
+             #'frozen': os.path.join(model_directory, 'frozen_set.txt'),
+             #'hacked': os.path.join(model_directory, 'hacked_set.txt'),
+             #'stunned': os.path.join(model_directory, 'stunned_set.txt'),
         }
         player_end_set_files = {
-            'color': os.path.join(self.model_directory, 'color_set.txt'),
         }
 
         final_output_weights = os.path.join(self.model_directory, 'player_weights.h5')
@@ -492,6 +527,9 @@ class PlayerAnnotator(object):
 
         self.sides = load_set(os.path.join(self.model_directory, 'side_set.txt'))
         self.side_count = len(self.sides)
+
+        self.colors = load_set(os.path.join(self.model_directory, 'color_set.txt'))
+        self.color_count = len(self.colors)
         self.sets = {}
         for k, v in player_set_files.items():
             self.sets[k] = load_set(v)
@@ -502,22 +540,22 @@ class PlayerAnnotator(object):
         for side in ['left', 'right']:
             for i in range(6):
                 self.statuses[(side, i)] = {k: [] for k in list(self.sets.keys()) + list(self.end_sets.keys())}
-        self.ocr_directory = ocr_directory
-        self.character_set = load_set(os.path.join(self.ocr_directory, 'labels_set.txt'))
+        #self.ocr_directory = ocr_directory
+        #self.character_set = load_set(os.path.join(self.ocr_directory, 'labels_set.txt'))
 
-        self.player_names = {}
-        for side in ['left', 'right']:
-            for i in range(6):
-                self.player_names[(side, i)] = defaultdict(int)
+        #self.player_names = {}
+        #for side in ['left', 'right']:
+        #    for i in range(6):
+        #        self.player_names[(side, i)] = defaultdict(int)
 
-        final_output_weights = os.path.join(self.ocr_directory, 'ocr_weights.h5')
-        final_output_json = os.path.join(self.ocr_directory, 'ocr_model.json')
-        with open(final_output_json, 'r') as f:
-            loaded_model_json = f.read()
-        model = keras.models.model_from_json(loaded_model_json)
-        model.load_weights(final_output_weights)
-        self.ocr_model = keras.models.Model(inputs=[model.input[0], model.input[1]],
-                                             outputs=[model.get_layer('softmax').output])
+        #final_output_weights = os.path.join(self.ocr_directory, 'ocr_weights.h5')
+        #final_output_json = os.path.join(self.ocr_directory, 'ocr_model.json')
+        #with open(final_output_json, 'r') as f:
+        #    loaded_model_json = f.read()
+        #model = keras.models.model_from_json(loaded_model_json)
+        #model.load_weights(final_output_weights)
+        #self.ocr_model = keras.models.Model(inputs=[model.input[0], model.input[1]],
+        #                                     outputs=[model.get_layer('softmax').output])
 
         self.left_params = BOX_PARAMETERS[film_format]['LEFT']
         self.right_params = BOX_PARAMETERS[film_format]['RIGHT']
@@ -525,9 +563,10 @@ class PlayerAnnotator(object):
         self.to_predicts = np.zeros(self.shape, dtype=np.uint8)
         self.process_index = 0
         self.begin_time = 0
-        self.spectator_mode_input = self._format_spec_mode_input(spectator_mode)
+        self.spectator_mode_input = self._format_spec_mode_input(spectator_mode.lower())
         self.side_input = self._format_side_input()
-        self.ocr_spectator_mode_input = self._format_ocr_spec_mode_input(spectator_mode)
+        self.color_input = self._format_color_input()
+        #self.ocr_spectator_mode_input = self._format_ocr_spec_mode_input(spectator_mode)
 
         if self.debug:
             self.caps = {}
@@ -561,7 +600,7 @@ class PlayerAnnotator(object):
                 self.caps[player].write(box)
 
         self.process_index += 1
-        self.annotate_names(name_boxes)
+        #self.annotate_names(name_boxes)
         if self.process_index == frames_per_seq:
             self.annotate_statuses()
             #print(self.statuses)
@@ -581,28 +620,30 @@ class PlayerAnnotator(object):
             ret.append(self.character_set[c])
         return ret
 
-    def decode_batch(self, word_batch):
+    #def decode_batch(self, word_batch):
 
-        out = self.ocr_model.predict_on_batch([word_batch, self.ocr_spectator_mode_input])
-        ret = []
-        for j in range(out.shape[0]):
-            out_best = list(np.argmax(out[j, 2:], 1))
-            out_best = [k for k, g in itertools.groupby(out_best)]
-            outstr = self.labels_to_text(out_best)
-            ret.append(outstr)
-        return ret
+    #    out = self.ocr_model.predict_on_batch([word_batch, self.ocr_spectator_mode_input])
+    #    ret = []
+    #    for j in range(out.shape[0]):
+    #        out_best = list(np.argmax(out[j, 2:], 1))
+    #        out_best = [k for k, g in itertools.groupby(out_best)]
+    #        outstr = self.labels_to_text(out_best)
+    #        ret.append(outstr)
+    #    return ret
 
-    def annotate_names(self, name_boxes):
-        for player, name_box in name_boxes.items():
-            gray = cv2.cvtColor(name_box, cv2.COLOR_BGR2GRAY)
-            input = np.expand_dims(cv2.threshold(gray, 0, 255,
-                                                 cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1], -1)
-            input = np.swapaxes(input, 0, 1)[None]
-            label = self.decode_batch(input)[0]
-            self.player_names[player][''.join(label)] += 1
+    #def annotate_names(self, name_boxes):
+    #    for player, name_box in name_boxes.items():
+    #        gray = cv2.cvtColor(name_box, cv2.COLOR_BGR2GRAY)
+    #        input = np.expand_dims(cv2.threshold(gray, 0, 255,
+    #                                             cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1], -1)
+    #        input = np.swapaxes(input, 0, 1)[None]
+    #        label = self.decode_batch(input)[0]
+    #        self.player_names[player][''.join(label)] += 1
 
     def _format_spec_mode_input(self, spectator_mode):
         input = np.zeros((12, 100, self.spectator_mode_count))
+        if spectator_mode == 'status':
+            spectator_mode = 'overwatch league'
         m = sparsify(np.array([self.spectator_modes.index(spectator_mode)]), self.spectator_mode_count)
         for i in range(12):
             for j in range(100):
@@ -628,10 +669,22 @@ class PlayerAnnotator(object):
                 input[i, j, :] = m
         return input
 
+    def _format_color_input(self):
+        input = np.zeros((12, frames_per_seq, self.color_count))
+        for i, player in enumerate(self.players):
+            if i < 6:
+                color = self.left_team_color
+            else:
+                color = self.right_team_color
+            m = sparsify(np.array([self.colors.index(color.lower())]), self.color_count)
+            for j in range(frames_per_seq):
+                input[i, j, :] = m
+        return input
+
     def annotate_statuses(self):
         if self.process_index == 0:
             return
-        lstm_output = self.model.predict([self.to_predicts, self.spectator_mode_input, self.side_input])
+        lstm_output = self.model.predict([self.to_predicts, self.spectator_mode_input, self.side_input]) #, self.color_input])
         #print(len(lstm_output), lstm_output[0].shape)
         for i, player in enumerate(self.statuses.keys()):
             side = player[0]
@@ -685,14 +738,11 @@ class PlayerAnnotator(object):
             print(v)
             side, ind = k
             new_statuses = {}
-            if self.player_names[k]:
-                new_statuses['player_name'] = max(self.player_names[k].keys(), key=lambda x: self.player_names[k][x])
+            new_statuses['player_name'] = self.player_names[k]
+            if side == 'left':
+                new_statuses['color'] = self.left_team_color
             else:
-                new_statuses['player_name'] = ''
-            colors = defaultdict(float)
-            for interval in v['color']:
-                colors[interval['status']] += interval['end'] - interval['begin']
-            new_statuses['color'] = max(colors.keys(), key=lambda x: colors[x])
+                new_statuses['color'] = self.right_team_color
 
             new_series = []
             for interval in v['alive']:
@@ -717,8 +767,8 @@ class PlayerAnnotator(object):
                             check = False
                             for s in new_statuses['alive']:
                                 # print(s)
-                                if s['begin'] <= interval['begin'] < s['end'] and interval['end'] - interval[
-                                    'begin'] < 10:
+                                if s['begin'] <= interval['begin'] < s['end'] and \
+                                        interval['end'] - interval['begin'] < 10:
                                     check = True
                                     break
                             if check and s['status'] == 'dead':
@@ -739,13 +789,13 @@ class PlayerAnnotator(object):
                 print(k2, v2)
             teams[side][ind] = PlayerState(k, new_statuses)
         left_team = Team('left', teams['left'])
-        left_team.color = 'blue'  # FIXME
+        left_team.color = self.left_team_color
         for p, v in left_team.player_states.items():
-            v.color = 'blue'
+            v.color = self.left_team_color
         right_team = Team('right', teams['right'])
-        right_team.color = 'red'  # FIXME
+        right_team.color = self.right_team_color
         for p, v in right_team.player_states.items():
-            v.color = 'red'
+            v.color = self.right_team_color
         return left_team, right_team
 
 
@@ -755,7 +805,8 @@ def sparsify(y, n_classes):
                      for i in range(y.shape[0])])
 
 
-def predict_on_video(video_path, begin, end, spectator_mode, film_format, sequences):
+def predict_on_video(video_path, begin, end, spectator_mode, film_format, sequences, r):
+    print(r)
     import pytesseract
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'
     tessdata_dir_config = '--tessdata-dir "C:\\Program Files (x86)\\Tesseract-OCR\\tessdata"'
@@ -765,8 +816,20 @@ def predict_on_video(video_path, begin, end, spectator_mode, film_format, sequen
 
     print(begin, end, end - begin)
     kill_feed_annotator = KillFeedAnnotator(kf_ctc_model_dir, film_format, spectator_mode
-                                            , debug=debug)
-    player_annotator = PlayerAnnotator(player_model_dir, player_ocr_model_dir, film_format, spectator_mode, debug=debug)
+                                            , debug=debug, half_npc_slots=r['spectator_mode']=='Status')
+    player_names = {}
+    player_mapping = {}
+    for t in r['game']['match']['event']['teams']:
+        for p in t['players']:
+            player_mapping[p['id']] = p['name']
+    for p in r['game']['left_team']['players']:
+        player_names[('left', p['player_index'])] = player_mapping[p['player']]
+    for p in r['game']['right_team']['players']:
+        player_names[('right', p['player_index'])] = player_mapping[p['player']]
+    print('PLAYERS', player_names)
+    player_annotator = PlayerAnnotator(player_model_dir, player_ocr_model_dir, film_format, spectator_mode,
+                                       r['game']['left_team']['color'].lower(), r['game']['right_team']['color'].lower(),
+                                       player_names, debug=debug)
     for s in sequences:
         print(s)
         time = s['begin']
@@ -778,6 +841,7 @@ def predict_on_video(video_path, begin, end, spectator_mode, film_format, sequen
                 break
             player_annotator.process_frame(frame)
             kill_feed_annotator.process_frame(frame, time_point)
+            print(time_point)
 
         player_annotator.annotate_statuses()
     kill_feed_annotator.cleanup()
@@ -792,7 +856,10 @@ def predict_on_video(video_path, begin, end, spectator_mode, film_format, sequen
         with open(status_path, 'wb') as f:
             pickle.dump(kill_feed_annotator.kill_feed, f)
     # print('lstm', )
+    death_events = kill_feed_annotator.generate_death_events()
     left_team, right_team = player_annotator.generate_teams()
+    left_team.color = r['game']['left_team']['color'].lower()
+    right_team.color = r['game']['right_team']['color'].lower()
     kill_feed_events = kill_feed_annotator.generate_kill_events(left_team, right_team)
     # for k, v in player_states.items():
     #    print(k)
@@ -863,7 +930,6 @@ def merged_event(e_one, e_two):
     if e_one['event']['first_hero'] != 'n/a' and e_two['event']['first_hero'] == 'n/a':
         return e_one['event']
     return e_two['event']
-
 
 
 class Team(object):
@@ -1198,36 +1264,6 @@ def get_replays(video_path, begin, end, film_format):
     return replays, pauses, sequences
 
 
-def main():
-    ignore_switches = [7393, 7394, 7395, 7396, 7397, 7398, 7399, 7400]
-    rounds = get_annotate_rounds()
-    for r in rounds:
-        local_path = get_local_path(r)
-        if local_path is None:
-            print(r['game']['match']['wl_id'], r['game']['game_number'], r['round_number'])
-            get_local_file(r)
-    for r in rounds:
-        print(r)
-        replays, pauses, sequences = get_replays(get_local_path(r), r['begin'], r['end'],
-                                                 r['game']['match']['film_format'])
-        print('r', replays)
-        print('p', pauses)
-        print('s', sequences)
-        data = predict_on_video(get_local_path(r), r['begin'], r['end'], r['spectator_mode'].lower(),
-                                r['game']['match']['film_format'], sequences)
-        data['replays'] = replays
-        data['pauses'] = pauses
-        if r['id'] in ignore_switches:
-            data['ignore_switches'] = True
-        else:
-            data['ignore_switches'] = False
-        print(data)
-        print(r)
-        update_annotations(data, r['id'])
-        # error
-
-
-
 
 def get_round_status(vod_path, begin, end, film_format, sequences):
     mid_annotator = MidAnnotator(mid_model_dir, film_format)
@@ -1249,164 +1285,56 @@ def get_round_status(vod_path, begin, end, film_format, sequences):
     return round_props
 
 
-
-def get_rounds(v):
-    valid, team_one, team_two, game_number, desc, event = extract_info(v)
-    if not valid:
-        return
-    annotation_path = os.path.join(oi_annotation_dir, '{}.json'.format(v['id']))
-    if not os.path.exists(annotation_path):
-        print(v['id'], team_one, team_two, game_number, desc)
-        game = {'vod_id': v['id'], 'team_one': team_one, 'team_two': team_two, 'game_number': game_number,
-                'description': desc, 'event': event, 'rounds': []}
-        round_path = os.path.join(annotation_dir, 'predicted_rounds.txt')
-        import time as timepackage
-        game_status = annotate_game_or_not(v)
-        rounds = []
-        for g in game_status:
-            if g['status'] == 'in_game':
-                dur = g['end'] - g['begin']
-                if dur < 20:
-                    continue
-                rounds.append({'vod_id': v['id'], 'begin': g['begin'], 'end': g['end']})
-        print('finished!')
-        ignore_switches = []
-
-        for r in rounds:
-            replays, pauses, sequences = get_replays(get_vod_path(v), r['begin'], r['end'], v['film_format'])
-            print('r', replays)
-            print('p', pauses)
-            print('s', sequences)
-            round_props = get_round_status(get_vod_path(v), r['begin'], r['end'], v['film_format'], sequences)
-
-            data = predict_on_video(get_vod_path(v), r['begin'], r['end'], round_props['spectator_mode'],
-                                    v['film_format'], sequences)
-            data['replays'] = replays
-            data['pauses'] = pauses
-            data['round'] = round_props
-            if v['id'] in ignore_switches:
-                data['ignore_switches'] = True
-            else:
-                data['ignore_switches'] = False
-            print(data)
-            game['rounds'].append(data)
-        with open(annotation_path, 'w', encoding='utf8') as f:
-            json.dump(game, f, indent=4)
-        error
-    else:
-        with open(annotation_path, 'r', encoding='utf8') as f:
-            game = json.load(f)
-    upload_game(game)
-
-
-
-
 def analyze_rounds(vods):
     game_dir = os.path.join(oi_annotation_dir, 'to_check')
     annotation_dir = os.path.join(oi_annotation_dir, 'annotations')
     for v in vods:
-        annotation_path = os.path.join(annotation_dir, '{}.json'.format(v['id']))
-        if not os.path.exists(annotation_path):
-            valid, team_one, team_two, game_number, desc, event = extract_info(v)
-            if not valid:
-                continue
-            game_path = os.path.join(game_dir, '{}_game_status.txt'.format(v['id']))
-            if not os.path.exists(game_path):
-                continue
-            print(v['id'], team_one, team_two, game_number, desc)
-            with open(game_path, 'r') as f:
-                game = json.load(f)
-            round_data = []
-            ignore_switches = []
-            for r in game['rounds']:
-                replays, pauses, sequences = get_replays(get_vod_path(v), r['begin'], r['end'], v['film_format'])
-                print('r', replays)
-                print('p', pauses)
-                print('s', sequences)
-                round_props = get_round_status(get_vod_path(v), r['begin'], r['end'], v['film_format'], sequences)
+        print(v)
+        for r in v['rounds']:
+            replays, pauses, sequences = get_replays(get_vod_path(v), r['begin'], r['end'], v['film_format'])
+            print('r', replays)
+            print('p', pauses)
+            print('s', sequences)
+            #round_props = get_round_status(get_vod_path(v), r['begin'], r['end'], v['film_format'], sequences)
 
-                data = predict_on_video(get_vod_path(v), r['begin'], r['end'], round_props['spectator_mode'],
-                                        v['film_format'], sequences)
-                data['replays'] = replays
-                data['pauses'] = pauses
-                data['round'] = round_props
-                if v['id'] in ignore_switches:
-                    data['ignore_switches'] = True
-                else:
-                    data['ignore_switches'] = False
-                print(data)
-                round_data.append(data)
-            game['rounds'] = round_data
-            with open(annotation_path, 'w', encoding='utf8') as f:
-                json.dump(game, f, indent=4)
-
-
-def upload_vods(vods):
-    annotation_dir = os.path.join(oi_annotation_dir, 'annotations')
-    for v in vods:
-        valid, team_one, team_two, game_number, desc, event = extract_info(v)
-        if not valid:
-            print('NOT VALID', v)
+            data = predict_on_video(get_vod_path(v), r['begin'], r['end'], r['spectator_mode'],
+                                    v['film_format'], sequences, r)
+            data['replays'] = replays
+            data['pauses'] = pauses
+            data['round'] = r
+            print(r)
+            print(data)
+            left_team = r['game']['left_team']['players']
+            right_team = r['game']['right_team']['players']
+            for p in left_team:
+                index = p['player_index']
+                player = p['player']
+                slot = 'left_{}'.format(index)
+                data['player'][slot]['player'] = player
+            for p in right_team:
+                index = p['player_index']
+                player = p['player']
+                slot = 'right_{}'.format(index)
+                data['player'][slot]['player'] = player
+            data['round'] = r['id']
+            upload_annotated_round_events(data)
             error
-            continue
-        annotation_path = os.path.join(annotation_dir, '{}.json'.format(v['id']))
-        if not os.path.exists(annotation_path):
-            continue
-        with open(annotation_path, 'r', encoding='utf8') as f:
-            game = json.load(f)
-        upload_game(game)
 
-
-def test():
-    kill_feed_annotator = KillFeedAnnotator(kf_ctc_model_dir, 'K', 'ability', debug=debug)
-    player_annotator = PlayerAnnotator(player_model_dir, player_ocr_model_dir, 'K', 'ability')
-    import pickle
-    status_path = r'E:\Data\Overwatch\status_test.pickle'
-    with open(status_path, 'rb') as f:
-        player_annotator.statuses = pickle.load(f)
-    status_path = r'E:\Data\Overwatch\kf_test.pickle'
-    with open(status_path, 'rb') as f:
-        kill_feed_annotator.kill_feed=pickle.load(f)
-
-    left_team, right_team = player_annotator.generate_teams()
-    kill_feed_events = kill_feed_annotator.generate_kill_events(left_team, right_team)
-
-    mech_deaths = kill_feed_annotator.mech_deaths
-    print(mech_deaths)
-    data_player_states = {}
-    for t in [left_team, right_team]:
-        side = t.side
-        for k, v in t.player_states.items():
-            k = '{}_{}'.format(side, k)
-            data_player_states[k] = {}
-            switches = v.generate_switches()
-            print(switches)
-            ug, uu = v.generate_ults(mech_deaths = [x for x in mech_deaths if x['color'] == t.color])
-            data_player_states[k]['player_name'] = v.name
-            data_player_states[k]['switches'] = switches
-            data_player_states[k]['ult_gains'] = ug
-            data_player_states[k]['ult_uses'] = uu
 
 def vod_main():
     #test()
     #error
-    vods = get_annotate_vods()
+    vods = get_annotate_vods_round_events()
     for v in vods:
         local_path = get_vod_path(v)
         if not os.path.exists(local_path):
             get_local_vod(v)
 
-    analyze_ingames(vods)
     analyze_rounds(vods)
-    #error
-    upload_vods(vods)
-    #for v in vods:
-    #    get_rounds(v)
 
 
 if __name__ == '__main__':
 
 
     print('loaded model')
-    # main()
     vod_main()

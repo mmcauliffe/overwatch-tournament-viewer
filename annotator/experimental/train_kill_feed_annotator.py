@@ -250,7 +250,10 @@ def check_val_errors(model, gen):
                         print(output_key)
                         print(cnn_label, actual_label)
                         print(gen.hdf5_file['val_round'][i_s+t_ind], time.strftime('%M:%S', time.gmtime(gen.hdf5_file['val_time_point'][i_s+t_ind])))
-                        cv2.imshow('frame', np.swapaxes(X[t_ind, j,  ...], 0, 1))
+                        if gen.subtract_mean:
+                            cv2.imshow('frame', np.swapaxes(X[t_ind, j,  ...] + gen.mm[0,  0, ...], 0, 1))
+                        else:
+                            cv2.imshow('frame', np.swapaxes(X[t_ind, j,  ...], 0, 1))
                         cv2.waitKey(0)
 
 
@@ -315,7 +318,7 @@ if __name__ == '__main__':
               'dim_z': 3,
               'batch_size': 4,
               'shuffle': True,
-              'subtract_mean': False}
+              'subtract_mean': True}
     num_epochs = 40
     # Datasets
 
