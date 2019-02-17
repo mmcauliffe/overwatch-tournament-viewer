@@ -4,7 +4,7 @@ vod_directory = r'E:\Data\Overwatch\raw_data\vods'
 training_data_directory = r'E:\Data\Overwatch\training_data'
 
 site_url = 'http://localhost:8000/'
-#site_url = 'https://omnicintelligence.com/'
+site_url = 'https://omnicintelligence.com/'
 
 api_url = site_url + 'api/'
 
