@@ -114,7 +114,8 @@ def look_up_player_state(side, index, time, states):
     data['alive'] = states['alive'][ind]['status']
 
     for s in STATUS_SET:
-
+        if not s:
+            continue
         ind = np.searchsorted(states[s+'_array'], time, side="right")
         if ind == len(states[s]):
             ind -= 1

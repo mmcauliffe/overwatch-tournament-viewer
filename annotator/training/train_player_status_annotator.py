@@ -19,15 +19,15 @@ set_files = {#'player': os.path.join(train_dir, 'player_set.txt'),
              'hero': os.path.join(train_dir, 'hero_set.txt'),
              'alive': os.path.join(train_dir, 'alive_set.txt'),
              'ult': os.path.join(train_dir, 'ult_set.txt'),
-             #'antiheal': os.path.join(train_dir, 'antiheal_set.txt'),
-             #'asleep': os.path.join(train_dir, 'asleep_set.txt'),
-             #'frozen': os.path.join(train_dir, 'frozen_set.txt'),
-             #'hacked': os.path.join(train_dir, 'hacked_set.txt'),
-             #'stunned': os.path.join(train_dir, 'stunned_set.txt'),
+             'antiheal': os.path.join(train_dir, 'antiheal_set.txt'),
+             'asleep': os.path.join(train_dir, 'asleep_set.txt'),
+             'frozen': os.path.join(train_dir, 'frozen_set.txt'),
+             'hacked': os.path.join(train_dir, 'hacked_set.txt'),
+             'stunned': os.path.join(train_dir, 'stunned_set.txt'),
              #'spectator': os.path.join(train_dir, 'spectator_set.txt'),
              }
 end_set_files = {
-            # 'color': os.path.join(train_dir, 'color_set.txt'),
+            'color': os.path.join(train_dir, 'color_set.txt'),
 }
 
 def load_set(path):
@@ -61,7 +61,7 @@ colors = load_set(os.path.join(train_dir, 'color_set.txt'))
 
 color_count = len(colors)
 
-spectator_modes = load_set(os.path.join(train_dir, 'spectator_modes.txt'))
+spectator_modes = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
 
 spectator_mode_count = len(spectator_modes)
 
@@ -191,16 +191,21 @@ class DataGenerator(object):
             next_file = False
         with h5py.File(path, 'r') as hf5:
             input['main_input'] = hf5["{}_img".format(pre)][i_s:i_e, ...]
-            input['side_input'] = sparsify_2d(hf5["{}_side_label".format(pre)][i_s:i_e], side_count)
-            d = hf5["{}_spectator_mode".format(pre)][i_s:i_e]
-            d2 =hf5["{}_color_label".format(pre)][i_s:i_e]
+
+
+            d = hf5["{}_spectator_mode_label".format(pre)][i_s:i_e]
+            #d2 =hf5["{}_color_label".format(pre)][i_s:i_e]
+            d3 =hf5["{}_side_label".format(pre)][i_s:i_e]
             spec_input = np.zeros((d.shape[0], 100), dtype=np.uint8)
-            color_input = np.zeros((d.shape[0], 100), dtype=np.uint8)
+            #color_input = np.zeros((d.shape[0], 100), dtype=np.uint8)
+            side_input = np.zeros((d.shape[0], 100), dtype=np.uint8)
             for i in range(d.shape[0]):
                 spec_input[i, :] = d[i]
-                color_input[i, :] = d2[i]
+            #    color_input[i, :] = d2[i]
+                side_input[i, :] = d3[i]
             input['spectator_mode_input'] = sparsify_2d(spec_input, spectator_mode_count)
-            input['color_input'] = sparsify_2d(color_input, color_count)
+            #input['color_input'] = sparsify_2d(color_input, color_count)
+            input['side_input'] = sparsify_2d(side_input, side_count)
             if check:
                 input['time_point'] = hf5["{}_time_point".format(pre)][i_s:i_e]
                 input['round'] = hf5["{}_round".format(pre)][i_s:i_e]
@@ -244,19 +249,23 @@ class DataGenerator(object):
             next_path = list(indices.values())[i+1]
             with h5py.File(next_path, 'r') as hf5:
                 input['main_input'] = np.concatenate((input['main_input'], hf5["{}_img".format(pre)][0:from_next, ...]))
-                input['side_input'] = np.concatenate((input['side_input'], sparsify_2d(hf5["{}_side_label".format(pre)][0:from_next], side_count)))
 
-                d = hf5["{}_spectator_mode".format(pre)][0:from_next]
-                d2 = hf5["{}_color_label".format(pre)][0:from_next]
+                d = hf5["{}_spectator_mode_label".format(pre)][0:from_next]
+                #d2 = hf5["{}_color_label".format(pre)][0:from_next]
+                d3 = hf5["{}_side_label".format(pre)][0:from_next]
                 spec_input = np.zeros((from_next, 100), dtype=np.uint8)
-                color_input = np.zeros((from_next, 100), dtype=np.uint8)
+                #color_input = np.zeros((from_next, 100), dtype=np.uint8)
+                side_input = np.zeros((from_next, 100), dtype=np.uint8)
                 for i in range(d.shape[0]):
                     spec_input[i, :] = d[i]
-                    color_input[i, :] = d2[i]
+                #    color_input[i, :] = d2[i]
+                    side_input[i, :] = d3[i]
                 input['spectator_mode_input'] = np.concatenate((input['spectator_mode_input'],
                                                                 sparsify_2d(spec_input, spectator_mode_count)))
-                input['color_input'] = np.concatenate((input['color_input'],
-                                                       sparsify_2d(color_input, color_count)))
+                #input['color_input'] = np.concatenate((input['color_input'],
+                #                                       sparsify_2d(color_input, color_count)))
+                input['side_input'] = np.concatenate((input['side_input'],
+                                                       sparsify_2d(side_input, side_count)))
                 if check:
                     input['time_point'] = np.concatenate((input['time_point'], hf5["{}_time_point".format(pre)][0:from_next]))
                     input['round'] = np.concatenate((input['round'], hf5["{}_round".format(pre)][0:from_next]))
@@ -310,7 +319,7 @@ class DataGenerator(object):
                 i_s = i * self.batch_size  # index of the first image in this batch
                 i_e = min([(i + 1) * self.batch_size, self.data_num])  # index of the last image in this batch
                 X, y = self._data_generation(i_s, i_e)
-                yield X, y#, weights
+                yield X, y
 
     def generate_val(self):
         'Generates batches of samples'
@@ -417,8 +426,8 @@ if __name__ == '__main__':
             frame_output = TimeDistributed(Dropout(0.5))(x)
             spectator_mode_input = Input(shape=(100, spectator_mode_count,), name='spectator_mode_input')
             side_input = Input(shape=(100, side_count,), name='side_input')
-            color_input = Input(shape=(100, color_count,), name='color_input')
-            x = keras.layers.concatenate([frame_output, side_input, spectator_mode_input, color_input])
+            #color_input = Input(shape=(100, color_count,), name='color_input')
+            x = keras.layers.concatenate([frame_output, side_input, spectator_mode_input]) #, color_input])
             x = CuDNNGRU(128, return_sequences=True)(x)
             x = CuDNNGRU(128, return_sequences=True)(x)
             seq_x = CuDNNGRU(128)(x)
@@ -431,7 +440,7 @@ if __name__ == '__main__':
             for k, count in end_class_counts.items():
                 outputs.append(Dense(count, activation='softmax', name=k + '_output')(seq_x))
                 #outputs.append(TimeDistributed(Dense(count, activation='softmax'), name=k + '_output')(x))
-            model = Model(inputs=[main_input, spectator_mode_input, side_input, color_input], outputs=outputs)
+            model = Model(inputs=[main_input, spectator_mode_input, side_input], outputs=outputs)
             model.summary()
             model.compile(loss=keras.losses.categorical_crossentropy,
                           optimizer=keras.optimizers.Adadelta(),

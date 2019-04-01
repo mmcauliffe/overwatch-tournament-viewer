@@ -88,7 +88,7 @@ class InGameAnnotator(object):
         self.model = keras.models.model_from_json(loaded_model_json)
         self.model.load_weights(final_output_weights)
 
-        self.params = BOX_PARAMETERS[film_format]['MID']
+        self.params = BOX_PARAMETERS[film_format]['GAME']
         self.shape = (frames_per_seq, int(self.params['HEIGHT'] * self.resize_factor), int(self.params['WIDTH'] * self.resize_factor), 3)
         self.to_predict = np.zeros(self.shape, dtype=np.uint8)
         self.process_index = 0
@@ -292,11 +292,6 @@ class MidAnnotator(object):
 def analyze_ingames(vods):
     game_dir = os.path.join(oi_annotation_dir, 'to_check')
     os.makedirs(game_dir, exist_ok=True)
-    mock_data = {'vod_id': 2287, 'rounds': [{'begin': 791, 'end': 1057}, {'begin': 1095, 'end': 1338}, {'begin': 1636, 'end': 2147}, {'begin': 2238, 'end': 2750}, {'begin': 3077, 'end': 3319}, {'begin': 3418, 'end': 3470}, {'begin': 3755, 'end': 4236}, {'begin': 4341, 'end': 4631}, {'begin': 4867, 'end': 4894}], 'team_one': 'Blackjack Gaming', 'team_two': 'FifteenSixxteen'}
-
-    resp = upload_annotated_in_out_game(mock_data)
-    print(resp)
-    error
     for v in vods:
         print(v)
         info= extract_info(v)
@@ -311,8 +306,8 @@ def analyze_ingames(vods):
                     continue
                 data['rounds'].append({'begin': g['begin'], 'end': g['end']})
         print(data)
-        error
         upload_annotated_in_out_game(data)
+        error
 
 
 def vod_main():

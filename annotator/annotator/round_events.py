@@ -231,11 +231,13 @@ class KillFeedAnnotator(object):
         pass
 
     def generate_kill_events(self, left_team, right_team):
+        from copy import deepcopy
         left_color = left_team.color
         right_color = right_team.color
         print('KILL FEED')
         possible_events = []
         #print(self.kill_feed)
+
         for ind, k in enumerate(self.kill_feed):
             for slot in range(6):
                 if slot not in k['slots']:
@@ -306,6 +308,8 @@ class KillFeedAnnotator(object):
                     break
 
             else:
+                if better_possible_events and p == better_possible_events[-1]:
+                    continue
                 better_possible_events.append(p)
         # better_possible_events = [x for x in better_possible_events if x['duration'] > 1]
         #for e in better_possible_events:
@@ -316,6 +320,7 @@ class KillFeedAnnotator(object):
         death_events = sorted(left_team.get_death_events() + right_team.get_death_events(),
                               key=lambda x: x['time_point'])
         actual_events = []
+        integrity_check = set()
         for de in death_events:
             #print(time.strftime('%M:%S', time.gmtime(de['time_point'])), de)
             best_distance = 100
@@ -327,13 +332,22 @@ class KillFeedAnnotator(object):
                     continue
                 dist = abs(e['time_point'] - de['time_point'])
                 if dist < best_distance:
-                    best_event = e
+                    best_event = deepcopy(e)
                     best_distance = dist
             #print(best_event)
             if best_event is None or best_distance > 7:
                 continue
             best_event['time_point'] = de['time_point']
+            integ = (best_event['time_point'], best_event['event']['second_hero'], best_event['event']['second_color'])
+            print()
+            print(de)
+            print(best_event)
+            print(integ, integ in integrity_check, integrity_check)
+            if integ in integrity_check:
+                continue
             actual_events.append(best_event)
+            integrity_check.add(integ)
+            print(actual_events)
         npc_events = []
         for e in better_possible_events:
             if e['event']['second_hero'] in npc_set:
@@ -343,7 +357,11 @@ class KillFeedAnnotator(object):
                             ne['duration'] = e['time_point'] + e['duration'] - ne['time_point']
                             break
                 else:
+                    integ = (e['time_point'], e['event']['second_hero'], e['event']['second_color'])
+                    if integ in integrity_check:
+                        continue
                     npc_events.append(e)
+                    integrity_check.add(integ)
         npc_events = [x for x in npc_events if x['duration'] > 3]
         print('NPC DEATHS')
         self.mech_deaths = []
@@ -353,9 +371,13 @@ class KillFeedAnnotator(object):
                 self.mech_deaths.append({'time_point': e['time_point'], 'color': e['event']['second_color']})
             #print(time.strftime('%M:%S', time.gmtime(e['time_point'])), e)
         print('REVIVES')
-        for e in better_possible_events:
+        for i, e in enumerate(better_possible_events):
             if e['event']['ability'] == 'resurrect' and e['duration'] > 0:
+                integ = (e['time_point'], e['event']['second_hero'], e['event']['second_color'])
+                if integ in integrity_check:
+                    continue
                 actual_events.append(e)
+                integrity_check.add(integ)
                 #print(time.strftime('%M:%S', time.gmtime(e['time_point'])), e)
         return sorted(actual_events, key=lambda x: x['time_point'])
 
@@ -861,6 +883,7 @@ def predict_on_video(video_path, begin, end, spectator_mode, film_format, sequen
     left_team.color = r['game']['left_team']['color'].lower()
     right_team.color = r['game']['right_team']['color'].lower()
     kill_feed_events = kill_feed_annotator.generate_kill_events(left_team, right_team)
+    print(kill_feed_events)
     # for k, v in player_states.items():
     #    print(k)
     #    print('switches', v.generate_switches())

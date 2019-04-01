@@ -28,7 +28,7 @@ lstm_kf_train_dir = os.path.join(training_data_directory, 'kf_lstm')
 
 def generate_data(rounds):
     import time as timepackage
-    generators = [PlayerStatusGenerator(), PlayerOCRGenerator(), KillFeedCTCGenerator(), MidStatusGenerator()]
+    generators = [PlayerStatusGenerator(), KillFeedCTCGenerator()]
     average_times = [0, 0, 0, 0]
     for round_index, r in enumerate(rounds):
         if r['stream_vod'] is None:
@@ -564,14 +564,14 @@ def get_hero_play_time(rounds):
     median_hero_play_time = play_time[int(len(play_time)/2)][1]
     for k,v in play_time:
         print(k, v, median_hero_play_time/v)
-    error
 
+    error
 
 if __name__ == '__main__':
     rounds_plus = get_train_rounds_plus()
     max_count = 100
     rounds = get_train_rounds()#[:max_count]
-    hero_times = get_hero_play_time(rounds)
+    #hero_times = get_hero_play_time(rounds)
     for r in rounds:
         print(list(r.keys()))
         print(r['sequences'])

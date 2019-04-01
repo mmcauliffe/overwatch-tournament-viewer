@@ -19,7 +19,7 @@ def get_player_list():
 def get_color_list():
     url = config.api_url + 'team_colors/'
     r = requests.get(url)
-    return sorted(set(x.lower() for x in r.json()))
+    return sorted(set(x['name'].lower() for x in r.json()))
 
 
 def get_spectator_modes():
@@ -68,6 +68,15 @@ def get_ability_list():
         ability_set.add(a['name'].lower())
     ability_set.add('defense matrix')
     return ability_set
+
+
+def get_train_info():
+    url = config.api_url + 'train_info/'
+    r = requests.get(url)
+    data = r.json()
+    for k, v in data.items():
+        print(k, v)
+    return data
 
 
 def get_train_rounds():
@@ -144,6 +153,8 @@ def get_player_states(round_id):
     for side, d in data.items():
         for ind, v in d.items():
             for k in ['ult', 'alive', 'hero'] + STATUS_SET:
+                if k == '':
+                    continue
                 data[side][ind]['{}_array'.format(k)] = np.array([x['end'] for x in v[k]])
     return data
 

@@ -80,6 +80,12 @@ BOX_PARAMETERS = {
             'HEIGHT': MID_HEIGHT,
             'WIDTH': MID_WIDTH,
         },
+        'GAME': {
+            'X': 520,
+            'Y': 35,
+            'HEIGHT': 84,
+            'WIDTH': 240,
+    },
         'KILL_FEED': {
             'X': 1280 - 20 - 250,
             'Y': 112,
@@ -129,6 +135,12 @@ BOX_PARAMETERS['K'] = {
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
+    'GAME': {
+        'X': 520,
+        'Y': 43,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+},
     'KILL_FEED': {
         'X': 1280 - 20 - 248 - 20,
         'Y': 120,
@@ -177,6 +189,12 @@ BOX_PARAMETERS['W'] = {
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
+    'GAME': {
+        'X': 520,
+        'Y': 34,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+},
     'KILL_FEED': {
         'X': 1280 - 20 - 248,
         'Y': 112,
@@ -225,6 +243,12 @@ BOX_PARAMETERS['2'] = {
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
+    'GAME': {
+        'X': 520,
+        'Y': 60,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+},
     'KILL_FEED': {
         'X': 1280 - 20 - 248,
         'Y': 136,
@@ -273,6 +297,12 @@ BOX_PARAMETERS['A'] = {  # Black borders around video feed
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
+    'GAME': {
+        'X': 490,
+        'Y': 45,
+        'HEIGHT': 84,
+        'WIDTH': 230,
+},
     'KILL_FEED': {
         'X': 950,
         'Y': 115,

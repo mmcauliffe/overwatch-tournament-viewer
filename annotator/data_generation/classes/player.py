@@ -22,6 +22,8 @@ class PlayerStatusGenerator(SequenceDataGenerator):
                      'ult': [na_lab, 'no_ult', 'using_ult', 'has_ult'],
                      'alive': [na_lab, 'alive', 'dead'], }
         for s in STATUS_SET:
+            if not s:
+                continue
             self.sets[s] = [na_lab] + ['not_' + s, s]
         self.end_sets = {
             # 'player': [na_lab] + PLAYER_SET,
@@ -53,7 +55,8 @@ class PlayerStatusGenerator(SequenceDataGenerator):
                 self.slot_params[(side, i)]['y'] = p['Y']
 
     def add_new_round_info(self, r, previous_train_count=0, previous_val_count=0):
-        self.immutable_set_values = {}
+        self.spec_mode = r['spectator_mode'].lower()
+        self.immutable_set_values = {'spectator_mode': self.spec_mode}
         super(PlayerStatusGenerator, self).add_new_round_info(r)
         if not self.generate_data:
             return
@@ -61,7 +64,6 @@ class PlayerStatusGenerator(SequenceDataGenerator):
         self.states = get_player_states(r['id'])
         self.left_color = r['game']['left_team']['color'].lower()
         self.right_color = r['game']['right_team']['color'].lower()
-        self.spec_mode = r['spectator_mode'].lower()
 
     def lookup_data(self, slot, time_point):
         d = look_up_player_state(slot[0], slot[1], time_point, self.states)

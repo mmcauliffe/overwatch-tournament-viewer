@@ -63,6 +63,7 @@ class DataGenerator(object):
         self.val_num = 0
         self.data_indices = {}
         self.val_indices = {}
+        count = 0
         for f in os.listdir(train_dir):
             if f.endswith('.hdf5'):
                 with h5py.File(os.path.join(train_dir, f), 'r') as h5f:
@@ -70,6 +71,9 @@ class DataGenerator(object):
                     self.val_num += h5f['val_img'].shape[0]
                     self.data_indices[self.data_num] = os.path.join(train_dir, f)
                     self.val_indices[self.val_num] = os.path.join(train_dir, f)
+                count += 1
+                #if count > 2:
+                #    break
 
         self.subtract_mean = subtract_mean
         #if self.subtract_mean:
@@ -138,7 +142,7 @@ class DataGenerator(object):
 
             input['the_labels'] = hf5["{}_label_sequence".format(pre)][i_s:i_e, ...]
             input['label_length'] = np.reshape(hf5["{}_label_sequence_length".format(pre)][i_s:i_e], (-1, 1))
-            input['input_length'] = np.zeros((i_e - i_s, 1))
+            input['input_length'] = np.zeros((input['the_input'].shape[0], 1))
             input['input_length'][:] = img_w // downsample_factor - 2
             # input['round'] = self.hdf5_file['{}_round'.format(pre)][i_s:i_e]
             # input['time_point'] = self.hdf5_file['{}_time_point'.format(pre)][i_s:i_e]
@@ -152,8 +156,8 @@ class DataGenerator(object):
                     cv2.imshow('frame', np.swapaxes(input['the_input'][i], 0, 1))
                     cv2.waitKey(0)
 
-            outputs = {'ctc': np.zeros([i_e - i_s])}  # dummy data for dummy loss function
-            sample_weights = np.ones([i_e - i_s])
+            outputs = {'ctc': np.zeros([input['the_input'].shape[0]])}  # dummy data for dummy loss function
+            sample_weights = np.ones([input['the_input'].shape[0]])
             for i in range(input['the_input'].shape[0]):
                 weight = [label_weights[x] for x in input['the_labels'][i] if x < len(labels)]
                 if not weight:
@@ -161,18 +165,20 @@ class DataGenerator(object):
                 else:
                     weight = np.mean(weight)
                 sample_weights[i] = weight
-        if next_file:
+        if next_file and i < len(indices) - 1:
             from_next = orig_i_e - next_ind
             next_path = list(indices.values())[i+1]
             with h5py.File(next_path, 'r') as hf5:
                 input['the_input'] = np.concatenate((input['the_input'], hf5["{}_img".format(pre)][0:from_next, ...]))
                 # if self.subtract_mean:
                 #    input['the_input'] -= self.mm
-
+                inp_len = np.zeros((from_next, 1))
+                inp_len[:] = img_w // downsample_factor - 2
+                input['input_length'] = np.concatenate((input['input_length'], inp_len))
                 input['the_labels'] = np.concatenate((input['the_labels'], hf5["{}_label_sequence".format(pre)][0:from_next, ...]))
                 input['label_length'] = np.concatenate((input['label_length'],
                                                         np.reshape(hf5["{}_label_sequence_length".format(pre)][0:from_next], (-1, 1))))
-
+                sample_weights = np.concatenate((sample_weights, np.ones([from_next])))
                 for i in range(input['the_input'].shape[0]-from_next, input['the_input'].shape[0]):
                     weight = [label_weights[x] for x in input['the_labels'][i] if x < len(labels)]
                     if not weight:
@@ -180,7 +186,7 @@ class DataGenerator(object):
                     else:
                         weight = np.mean(weight)
                     sample_weights[i] = weight
-
+                outputs['ctc'] = np.concatenate((outputs['ctc'], np.zeros([from_next])))
         return input, outputs, sample_weights
 
     def generate_train(self):
@@ -194,7 +200,7 @@ class DataGenerator(object):
                 i_s = i * self.batch_size  # index of the first image in this batch
                 i_e = min([(i + 1) * self.batch_size, self.data_num])  # index of the last image in this batch
                 X, y, weights = self._data_generation(i_s, i_e)
-                yield X, y, weights
+                yield X, y#, weights
 
     def generate_val(self):
         'Generates batches of samples'
@@ -496,7 +502,9 @@ if __name__ == '__main__':
                                       validation_data=validation_generator,
                                       validation_steps=gen.val_num // params['batch_size'],
                                       # validation_steps=100
-                                      callbacks=[viz_cb, checkpointer, early_stopper, tensorboard],
+                                      callbacks=[viz_cb, checkpointer,
+                                                 early_stopper,
+                                                 tensorboard],
                                       # class_weight=class_weights
                                       )
         model.save_weights(final_output_weights)

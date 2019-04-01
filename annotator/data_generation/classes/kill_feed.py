@@ -6,7 +6,7 @@ import heapq
 import numpy as np
 
 from annotator.data_generation.classes.ctc import CTCDataGenerator
-from annotator.game_values import COLOR_SET, HERO_SET, ABILITY_SET, HERO_ONLY_SET, NPC_MARKED_SET
+from annotator.game_values import COLOR_SET, HERO_SET, LABEL_SET
 from annotator.config import BOX_PARAMETERS, na_lab
 from annotator.api_requests import get_kf_events
 from annotator.utils import get_event_ranges
@@ -34,10 +34,11 @@ def construct_kf_at_time(events, time):
 class KillFeedCTCGenerator(CTCDataGenerator):
     identifier = 'kill_feed_ctc'
     num_slots = 6
+    num_variations = 2
 
     def __init__(self):
         super(KillFeedCTCGenerator, self).__init__()
-        self.label_set = COLOR_SET + HERO_ONLY_SET + [x + '_assist' for x in HERO_SET] + ABILITY_SET + NPC_MARKED_SET
+        self.label_set = LABEL_SET
         self.save_label_set()
         self.image_width = BOX_PARAMETERS['O']['KILL_FEED_SLOT']['WIDTH']
         self.image_height = BOX_PARAMETERS['O']['KILL_FEED_SLOT']['HEIGHT']
@@ -71,7 +72,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
 
         sequence.append(self.label_set.index(d['ability']))
         second = d['second_hero']
-        if second not in HERO_ONLY_SET and second+'_npc' in NPC_MARKED_SET:
+        if second not in HERO_SET and second+'_npc' in LABEL_SET:
             second += '_npc'
         sequence.append(self.label_set.index(second))
         sequence.append(self.label_set.index(d['second_color']))
@@ -90,7 +91,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                 sequence = []
                 is_npc = False
             else:
-                is_npc = kf[slot]['second_hero'] not in HERO_ONLY_SET + ['b.o.b._npc']
+                is_npc = kf[slot]['second_hero'] not in HERO_SET + ['b.o.b._npc']
             x = params['x']
             y = params['y']
             #if self.half_size_npcs and is_npc:
@@ -119,7 +120,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                 is_npc = False
             else:
                 sequence = self.lookup_data(kf[s], time_point)
-                is_npc = kf[s]['second_hero'] not in HERO_ONLY_SET + ['b.o.b._npc']
+                is_npc = kf[s]['second_hero'] not in HERO_SET + ['b.o.b._npc']
 
             variation_set = [(0, 0)]
             while len(variation_set) < self.num_variations:

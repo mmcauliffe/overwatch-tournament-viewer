@@ -7,7 +7,7 @@ import numpy as np
 from annotator.data_generation.classes.ctc import CTCDataGenerator
 from annotator.api_requests import get_player_states
 from annotator.config import na_lab, sides, BOX_PARAMETERS
-from annotator.game_values import PLAYER_CHARACTER_SET, COLOR_SET
+from annotator.game_values import COLOR_SET
 from annotator.utils import look_up_player_state
 
 

@@ -98,3 +98,5 @@ wl_analysis/\.Rhistory
 *.png
 
 annotator/auth_token
+
+*.csv
