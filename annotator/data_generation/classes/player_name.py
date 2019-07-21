@@ -7,7 +7,7 @@ import numpy as np
 from annotator.data_generation.classes.ctc import CTCDataGenerator
 from annotator.api_requests import get_player_states
 from annotator.config import na_lab, sides, BOX_PARAMETERS
-from annotator.game_values import COLOR_SET
+from annotator.game_values import COLOR_SET, PLAYER_CHARACTER_SET
 from annotator.utils import look_up_player_state
 
 
@@ -15,11 +15,15 @@ class PlayerOCRGenerator(CTCDataGenerator):
     identifier = 'player_ocr'
     num_slots = 12
     time_step = 10
-    num_variations = 3
+    num_variations = 1
 
-    def __init__(self):
+    def __init__(self, debug=False):
         super(PlayerOCRGenerator, self).__init__()
         self.label_set = PLAYER_CHARACTER_SET
+        self.debug=debug
+        if self.debug:
+            os.makedirs(os.path.join(self.training_directory, 'debug', 'train'), exist_ok=True)
+            os.makedirs(os.path.join(self.training_directory, 'debug', 'val'), exist_ok=True)
         self.save_label_set()
         self.sets = {}
         self.save_set_info()
@@ -45,10 +49,10 @@ class PlayerOCRGenerator(CTCDataGenerator):
             params = self.slot_params[s]
             sequence, alive, color = self.lookup_data(s, time_point)
 
-            variation_set = [(0, 0)]
+            variation_set = []
             while len(variation_set) < self.num_variations:
                 x_offset = random.randint(-3, 3)
-                y_offset = random.randint(-3, 3)
+                y_offset = random.randint(-2, 2)
                 if (x_offset, y_offset) in variation_set:
                     continue
                 variation_set.append((x_offset, y_offset))
@@ -68,8 +72,14 @@ class PlayerOCRGenerator(CTCDataGenerator):
                 #if i == 0:
                     #cv2.imshow('gray_{}'.format(s), gray)
                     #cv2.imshow('bw_{}'.format(s), bw)
+                if self.debug:
+                    name = self.names[s]
+                    if name.startswith('blas'):
+                        name = 'blase'
+                    cv2.imwrite(os.path.join(self.training_directory, 'debug', pre, '{}_{}.jpg'.format(name, self.process_index)), box)
                 box = np.swapaxes(box, 1, 0)
                 self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
+
                 #self.train_mean += box / self.hdf5_file['train_img'].shape[0]
                 sequence_length = len(sequence)
                 if sequence:

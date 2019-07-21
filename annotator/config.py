@@ -340,9 +340,9 @@ BOX_PARAMETERS['A'] = {  # Black borders around video feed
 for k, f in BOX_PARAMETERS.items():
     for s in ['LEFT', 'RIGHT']:
         BOX_PARAMETERS[k]['{}_NAME'.format(s)] = {'X': f[s]['X'],
-                                                  'Y': f[s]['Y'] + 34,
+                                                  'Y': f[s]['Y'] + 32,
                                                   'WIDTH': f[s]['WIDTH'],
-                                                  'HEIGHT': 12,
+                                                  'HEIGHT': 16,
                                                   'MARGIN': f[s]['MARGIN'],
                                                   }
 

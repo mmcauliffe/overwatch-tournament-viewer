@@ -12,22 +12,39 @@ from torch.autograd import Variable
 import torch.optim as optim
 import random
 import itertools
+from torch.nn import CTCLoss
+from annotator.models import crnn
 
 working_dir = r'E:\Data\Overwatch\models\kill_feed_ctc'
 os.makedirs(working_dir, exist_ok=True)
 log_dir = os.path.join(working_dir, 'log')
 TEST = True
-train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
+train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc_filtered'
+
+# params
 
 cuda = True
 seed = 1
 batch_size = 100
 test_batch_size = 100
-epochs = 10
-lr = 0.01
+num_epochs = 10
+lr = 0.001 # learning rate for Critic, not used by adadealta
+beta1 = 0.5 # beta1 for adam. default=0.5
+use_adam = False # whether to use adam (default is rmsprop)
+use_adadelta = False # whether to use adadelta (default is rmsprop)
 momentum = 0.5
 log_interval = 10
+image_height = 32
+image_width = 248
+num_channels = 3
+num_hidden = 256
+n_test_disp = 10
+display_interval = 100
+manualSeed = 1234 # reproduce experiemnt
 
+random.seed(manualSeed)
+np.random.seed(manualSeed)
+torch.manual_seed(manualSeed)
 
 def labels_to_text(ls):
     ret = []
@@ -51,7 +68,6 @@ def decode_batch(out):
         ret.append(outstr)
     return ret
 
-
 def load_set(path):
     ts = []
     with open(path, 'r', encoding='utf8') as f:
@@ -65,9 +81,116 @@ labels = load_set(os.path.join(train_dir, 'labels_set.txt'))
 class_count = len(labels)
 blank_ind = len(labels) - 1
 
+#for i, lab in enumerate(labels):
+#    if lab == '':
+#        blank_ind = i
+#        break
+#class_count = blank_ind + 1
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
 
+
+class strLabelConverter(object):
+    """Convert between str and label.
+
+    NOTE:
+        Insert `blank` to the alphabet for CTC.
+
+    Args:
+        alphabet (str): set of the possible characters.
+        ignore_case (bool, default=True): whether or not to ignore all of the case.
+    """
+
+    def __init__(self, alphabet, ignore_case=False):
+        self._ignore_case = ignore_case
+        if self._ignore_case:
+            alphabet = alphabet.lower()
+        self.alphabet = alphabet + ['-']  # for `-1` index
+
+        self.dict = {}
+        for i, char in enumerate(alphabet):
+            # NOTE: 0 is reserved for 'blank' required by wrap_ctc
+            self.dict[char] = i + 1
+
+    def encode(self, text):
+        """Support batch or single str.
+
+        Args:
+            text (str or list of str): texts to convert.
+
+        Returns:
+            torch.IntTensor [length_0 + length_1 + ... length_{n - 1}]: encoded texts.
+            torch.IntTensor [n]: length of each text.
+        """
+        '''
+        if isinstance(text, str):
+            text = [
+                self.dict[char.lower() if self._ignore_case else char]
+                for char in text
+            ]
+            length = [len(text)]
+        elif isinstance(text, collections.Iterable):
+            length = [len(s) for s in text]
+            text = ''.join(text)
+            text, _ = self.encode(text)
+        return (torch.IntTensor(text), torch.IntTensor(length))
+        '''
+        length = []
+        result = []
+        for item in text:
+            try:
+                item = item.decode('utf-8', 'strict')
+                if ' ' in item:
+                    item = item.split(' ')
+                length.append(len(item))
+                for char in item:
+                    index = self.dict[char]
+                    result.append(index)
+            except:
+                print(item)
+                raise
+        text = result
+        return (torch.IntTensor(text), torch.IntTensor(length))
+
+    def decode(self, t, length, raw=False):
+        """Decode encoded texts back into strs.
+
+        Args:
+            torch.IntTensor [length_0 + length_1 + ... length_{n - 1}]: encoded texts.
+            torch.IntTensor [n]: length of each text.
+
+        Raises:
+            AssertionError: when the texts and its length does not match.
+
+        Returns:
+            text (str or list of str): texts to convert.
+        """
+        if length.numel() == 1:
+            length = length[0]
+            assert t.numel() == length, "text with length: {} does not match declared length: {}".format(t.numel(),
+                                                                                                         length)
+            if raw:
+                return ' '.join([self.alphabet[i - 1] for i in t])
+            else:
+                char_list = []
+                for i in range(length):
+                    if t[i] != 0 and (not (i > 0 and t[i - 1] == t[i])):
+                        char_list.append(self.alphabet[t[i] - 1])
+                return ' '.join(char_list)
+        else:
+            # batch mode
+            assert t.numel() == length.sum(), "texts with length: {} does not match declared length: {}".format(
+                t.numel(), length.sum())
+            texts = []
+            index = 0
+            for i in range(length.numel()):
+                l = length[i]
+                texts.append(
+                    self.decode(
+                        t[index:index + l], torch.IntTensor([l]), raw=raw))
+                index += l
+            return texts
 
 class TrainDataset(data.Dataset):
     def __init__(self):
@@ -76,14 +199,14 @@ class TrainDataset(data.Dataset):
         self.data_indices = {}
         count = 0
         for f in os.listdir(train_dir):
-            if f != '8184.hdf5':
-                continue
+            #if f != '8184.hdf5':
+            #    continue
             if f.endswith('.hdf5'):
                 with h5py.File(os.path.join(train_dir, f), 'r') as h5f:
                     self.data_num += h5f['train_img'].shape[0]
                     self.data_indices[self.data_num] = os.path.join(train_dir, f)
                 count += 1
-                if count > 1:
+                if count > 2:
                     break
         self.weights = {}
         print('DONE SETTING UP')
@@ -107,24 +230,25 @@ class TrainDataset(data.Dataset):
 
             inputs['image']= torch.from_numpy(np.transpose(hf5['train_img'][real_index:real_index+batch_size, ...],  (0, 3 ,2, 1))).float()
             labs = hf5["train_label_sequence"][real_index:real_index+batch_size, ...].astype(np.int32)
-            #labs += 1
+
             labs[labs > blank_ind] = blank_ind
+            labs = labs.reshape(labs.shape[0] * labs.shape[1])
+            labs = labs[labs != blank_ind]
+            labs += 1
             outputs['the_labels'] = torch.from_numpy(labs).long()
-            print(hf5["train_label_sequence_length"][real_index:real_index+batch_size].shape)
             outputs['label_length'] = torch.from_numpy(hf5["train_label_sequence_length"][real_index:real_index+batch_size]).long()
-            print(outputs['label_length'].shape)
             # For removing all blank images
-            inds = outputs['label_length'] != 1
-            inputs['image'] = inputs['image'][inds]
-            outputs['the_labels'] = outputs['the_labels'][inds]
-            outputs['label_length'] = outputs['label_length'][inds]
-            for i in range(inputs['image'].shape[0]):
-                length = outputs['label_length'][i]
-                if length > 1 and blank_ind in outputs['the_labels'][i][:length]:
-                    print(outputs['the_labels'][i])
-                    print(outputs['the_labels'][i][:length])
-                    print(outputs['label_length'][i])
-                    error
+            #inds = outputs['label_length'] != 1
+            #inputs['image'] = inputs['image'][inds]
+            #outputs['the_labels'] = outputs['the_labels'][inds]
+            #outputs['label_length'] = outputs['label_length'][inds]
+            #for i in range(inputs['image'].shape[0]):
+            #    length = outputs['label_length'][i]
+            #    if blank_ind in outputs['the_labels'][i][:length]:
+            #        print(outputs['the_labels'][i])
+            #        print(outputs['the_labels'][i][:length])
+            #        print(outputs['label_length'][i])
+            #        raise Exception
 
         return inputs, outputs
 
@@ -141,7 +265,7 @@ class TestDataset(data.Dataset):
                     self.data_num += h5f['val_img'].shape[0]
                     self.data_indices[self.data_num] = os.path.join(train_dir, f)
                 count += 1
-                if count > 1:
+                if count > 2:
                     break
 
     def __getitem__(self, index):
@@ -157,208 +281,195 @@ class TestDataset(data.Dataset):
         outputs = {}
         with h5py.File(path, 'r') as hf5:
             inputs['image']= torch.from_numpy(np.transpose(hf5['val_img'][real_index:real_index+batch_size, ...], (0, 3 ,2, 1))).float()
-
-            outputs['the_labels'] = torch.from_numpy(hf5["val_label_sequence"][real_index:real_index+batch_size, ...].astype(np.int32)).long()
+            labs = hf5["val_label_sequence"][real_index:real_index+batch_size, ...].astype(np.int32)
+            labs[labs > blank_ind] = blank_ind
+            labs = labs.reshape(labs.shape[0] * labs.shape[1])
+            labs = labs[labs != blank_ind]
+            labs += 1
+            outputs['the_labels'] = torch.from_numpy(labs).long()
             outputs['label_length'] = torch.from_numpy(np.reshape(hf5["val_label_sequence_length"][real_index:real_index+batch_size], (-1, 1))).long()
         return inputs, outputs
 
     def __len__(self):
         return int(self.data_num / test_batch_size)
 
+class averager(object):
+    """Compute average for `torch.Variable` and `torch.Tensor`. """
+
+    def __init__(self):
+        self.reset()
+
+    def add(self, v):
+        if isinstance(v, Variable):
+            count = v.data.numel()
+            v = v.data.sum()
+        elif isinstance(v, torch.Tensor):
+            count = v.numel()
+            v = v.sum()
+
+        self.n_count += count
+        self.sum += v
+
+    def reset(self):
+        self.n_count = 0
+        self.sum = 0
+
+    def val(self):
+        res = 0
+        if self.n_count != 0:
+            res = self.sum / float(self.n_count)
+        return res
 
 train_set = TrainDataset()
-trainloader = torch.utils.data.DataLoader(train_set, batch_size=1,
-                                          shuffle=True)
 test_set = TestDataset()
-testloader = torch.utils.data.DataLoader(test_set, batch_size=1,
-                                          shuffle=True)
-
-def imshow(img):
-    img = img.cpu()
-    npimg = img.numpy()
-    img = np.transpose(npimg, (1,2, 0))[:,:, [2,1,0]]/255
-    plt.imshow(img)
-    plt.show()
-
-# get some random training images
-dataiter = iter(trainloader)
-inputs, outputs = dataiter.next()
-print(inputs['image'].shape)
-print(outputs['the_labels'].shape)
-# show images
-#imshow(torchvision.utils.make_grid(inputs['image'][0, :4, ...],nrow=1))
-
-for i in range(4):
-    print(outputs['the_labels'][0,i])
-    print('Labels', ' '.join(labels[x] for x in outputs['the_labels'][0,i] if x < len(labels)))
 
 
-class BidirectionalLSTM(nn.Module):
-    def __init__(self, nIn, nHidden, nOut):
-        super(BidirectionalLSTM, self).__init__()
+# net init
+# custom weights initialization called on crnn
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        m.weight.data.normal_(0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        m.weight.data.normal_(1.0, 0.02)
+        m.bias.data.fill_(0)
 
-        self.rnn = nn.LSTM(nIn, nHidden, bidirectional=True)
-        self.embedding = nn.Linear(nHidden * 2, nOut)
+num_classes = len(labels) + 1
+net = crnn.CRNN(image_height, num_channels, num_classes, num_hidden)
+net.apply(weights_init)
+print(net)
 
-    def forward(self, input):
-        recurrent, _ = self.rnn(input)
-        T, b, h = recurrent.size()
-        t_rec = recurrent.view(T * b, h)
+# -------------------------------------------------------------------------------------------------
+converter = strLabelConverter(labels)
+criterion = CTCLoss()
 
-        output = self.embedding(t_rec)  # [T * b, nOut]
-        output = output.view(T, b, -1)
-        return output
+image = torch.FloatTensor(batch_size, 3, image_height, image_width)
+text = torch.IntTensor(batch_size * 5)
+length = torch.IntTensor(batch_size)
+if cuda and torch.cuda.is_available():
+    net.cuda()
+    image = image.cuda()
+    criterion = criterion.cuda()
+image = Variable(image)
+text = Variable(text)
+length = Variable(length)
 
+# loss averager
+loss_avg = averager()
 
-class CRNN(nn.Module):
-
-    def __init__(self, imgH, nc, nclass, nh, n_rnn=2, leakyRelu=False):
-        super(CRNN, self).__init__()
-        assert imgH % 16 == 0, 'imgH has to be a multiple of 16'
-
-        ks = [3, 3, 3, 3, 3, 3, 2]
-        ps = [1, 1, 1, 1, 1, 1, 0]
-        ss = [1, 1, 1, 1, 1, 1, 1]
-        nm = [64, 128, 256, 256, 512, 512, 512]
-
-        cnn = nn.Sequential()
-
-        def convRelu(i, batchNormalization=False):
-            nIn = nc if i == 0 else nm[i - 1]
-            nOut = nm[i]
-            cnn.add_module('conv{0}'.format(i),
-                           nn.Conv2d(nIn, nOut, ks[i], ss[i], ps[i]))
-            if batchNormalization:
-                cnn.add_module('batchnorm{0}'.format(i), nn.BatchNorm2d(nOut))
-            if leakyRelu:
-                cnn.add_module('relu{0}'.format(i),
-                               nn.LeakyReLU(0.2, inplace=True))
-            else:
-                cnn.add_module('relu{0}'.format(i), nn.ReLU(True))
-
-        convRelu(0)
-        cnn.add_module('pooling{0}'.format(0), nn.MaxPool2d(2, 2))  # 64x16x64
-        convRelu(1)
-        cnn.add_module('pooling{0}'.format(1), nn.MaxPool2d(2, 2))  # 128x8x32
-        convRelu(2, True)
-        convRelu(3)
-        cnn.add_module('pooling{0}'.format(2),
-                       nn.MaxPool2d((2, 2), (2, 1), (0, 1)))  # 256x4x16
-        convRelu(4, True)
-        convRelu(5)
-        cnn.add_module('pooling{0}'.format(3),
-                       nn.MaxPool2d((2, 2), (2, 1), (0, 1)))  # 512x2x16
-        convRelu(6, True)  # 512x1x16
-
-        self.cnn = cnn
-        self.rnn = nn.Sequential(
-            BidirectionalLSTM(512, nh, nh),
-            BidirectionalLSTM(nh, nh, nclass))
-
-    def forward(self, input):
-        input = input['image']
-        # conv features
-        conv = self.cnn(input)
-        print(conv.shape)
-        b, c, h, w = conv.size()
-        assert h == 1, "the height of conv must be 1"
-        conv = conv.squeeze(2)
-        conv = conv.permute(2, 0, 1)  # [w, b, c]
-        print(conv.shape)
-
-        # rnn features
-        output = self.rnn(conv)
-        print(output.shape)
-        return output
+# setup optimizer
+if use_adam:
+    optimizer = optim.Adam(net.parameters(), lr=lr, betas=(beta1, 0.999))
+elif use_adadelta:
+    optimizer = optim.Adadelta(net.parameters())
+else:
+    optimizer = optim.RMSprop(net.parameters(), lr=lr)
 
 
-net = CRNN(32, 3, len(labels), nh=256)
-net.to(device)
-
-ctc_loss = nn.CTCLoss(blank=blank_ind)
-ctc_loss.to(device)
-#optimizer = optim.SGD(net.parameters(), lr=lr, momentum=momentum)
-optimizer = optim.Adagrad(net.parameters())
-
-import time
-for epoch in range(2):  # loop over the dataset multiple times
-    batch_begin = time.time()
-    running_loss = 0.0
-    for i, data in enumerate(trainloader, 0):
-        print(i)
-        # get the inputs
-        #begin = time.time()
-        inputs, data_labels = data
-        for k,v in inputs.items():
-            v = v[0]
-            inputs[k] = v.to(device)
-        for k,v in data_labels.items():
-            v = v[0]
-            data_labels[k] = v.to(device)
-        #print('Loading data took: {}'.format(time.time()-begin))
-        # zero the parameter gradients
-        optimizer.zero_grad()
-
-        # forward + backward + optimize
-        #begin = time.time()
-        predicteds = net(inputs)
-        print(predicteds.shape)
-        predicteds = predicteds.log_softmax(2)
-        print(predicteds.shape)
-        input_lengths = torch.full((inputs['image'].shape[0],),
-                                   predicteds.shape[0]).long()
-        input_lengths.to(device)
-
-        #print('Predicting data took: {}'.format(time.time()-begin))
-        decode_batch(predicteds.cpu().detach().numpy())
-        #begin = time.time()
-        print(predicteds.shape)
-        #print('TRUE LABELS', data_labels['the_labels'].shape)
-        #print('TRUE LABELS', data_labels['the_labels'])
-        #print(input_lengths)
-        #print(input_lengths.shape)
-        #print(data_labels['label_length'])
-        #print(data_labels['label_length'].shape)
-        loss = ctc_loss(predicteds, data_labels['the_labels'], input_lengths, data_labels['label_length'])
-        print(loss.item())
-
-        #print('Loss calculation took: {}'.format(time.time()-begin))
-        #begin = time.time()
-        loss.backward()
-        optimizer.step()
-        #print('Back prop took: {}'.format(time.time()-begin))
-
-        # print statistics
-        #begin = time.time()
-        running_loss += loss.item()
-        #print(loss.item())
-        if i % 50 == 49:    # print every 50 mini-batches
-            #print(predicteds['hero'])
-            #print(labels['hero'])
-            print('Epoch %d, %d/%d, loss: %.3f' %
-                  (epoch + 1, i + 1, len(train_set), running_loss / i))
-            running_loss = 0.0
-            print('Batch took: {}'.format(time.time()-batch_begin))
-        batch_begin = time.time()
+def loadData(v, data):
+    v.resize_(data.size()).copy_(data)
 
 
+def val(net, dataset, criterion, max_iter=100):
+    print('Start val')
 
-print('Finished Training')
+    for p in net.parameters():
+        p.requires_grad = False
 
-dataiter = iter(testloader)
-inputs, outputs = dataiter.next()
-for k,v in inputs.items():
-    v = v[0]
-    inputs[k] = v.to(device)
-for k,v in outputs.items():
-    v = v[0]
-    outputs[k] = v.to(device)
+    net.eval()
+    data_loader = torch.utils.data.DataLoader(test_set, batch_size=1,
+                                              shuffle=True)
 
-# print images
-#imshow(torchvision.utils.make_grid(inputs['image'][:4, ...], nrow=1))
-with torch.no_grad():
-    predicteds = net(inputs)
-    predicted_labels = decode_batch(predicteds.cpu())
-    for i in range(4):
-        print(predicted_labels[i])
-        print('Labels', ' '.join(labels[x] for x in outputs['the_labels'][i] if x < len(labels)))
+    val_iter = iter(data_loader)
+
+    i = 0
+    n_correct = 0
+    loss_avg = averager()
+
+    max_iter = min(max_iter, len(data_loader))
+    for i in range(max_iter):
+        inputs, outputs = val_iter.next()
+        i += 1
+        cpu_images = inputs['image'][0]
+        cpu_texts = outputs['the_labels'][0]
+        cpu_lengths = outputs['label_length'][0]
+
+        batch_size = cpu_images.size(0)
+        loadData(image, cpu_images)
+        loadData(text, cpu_texts)
+        loadData(length, cpu_lengths)
+
+        preds = net(image)
+        preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+        cost = criterion(preds, text, preds_size, length) / batch_size
+        loss_avg.add(cost)
+
+        _, preds = preds.max(2)
+        preds = preds.transpose(1, 0).contiguous().view(-1)
+        sim_preds = converter.decode(preds.data, preds_size.data, raw=False)
+        cpu_texts_decode = converter.decode(cpu_texts, cpu_lengths, raw=False)
+        for pred, target in zip(sim_preds, cpu_texts_decode):
+            if pred == target:
+                n_correct += 1
+
+    raw_preds = converter.decode(preds.data, preds_size.data, raw=True)[:n_test_disp]
+    for raw_pred, pred, gt in zip(raw_preds, sim_preds, cpu_texts_decode):
+        print('%-20s => %-20s, gt: %-20s' % (raw_pred, pred, gt))
+
+    accuracy = n_correct / float(max_iter * batch_size)
+    print('Test loss: %f, accuray: %f' % (loss_avg.val(), accuracy))
+
+
+def trainBatch(net, criterion, optimizer):
+    inputs, outputs = train_iter.next()
+    cpu_images = inputs['image'][0]
+    cpu_texts = outputs['the_labels'][0]
+    cpu_lengths = outputs['label_length'][0]
+    batch_size = cpu_images.size(0)
+    loadData(image, cpu_images)
+
+    loadData(text, cpu_texts)
+    loadData(length, cpu_lengths)
+
+    optimizer.zero_grad()
+    preds = net(image)
+    preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+
+    cost = criterion(preds, text, preds_size, length) / batch_size
+    # net.zero_grad()
+    cost.backward()
+    optimizer.step()
+    return cost
+
+
+### TRAINING
+
+if __name__ == '__main__':
+    import time
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=1,
+                                              shuffle=True)
+    print(len(train_loader), 'batches')
+    for epoch in range(num_epochs):
+        print('Epoch', epoch)
+        begin = time.time()
+        train_iter = iter(train_loader)
+        i = 0
+        while i < len(train_loader):
+            for p in net.parameters():
+                p.requires_grad = True
+            net.train()
+
+            cost = trainBatch(net, criterion, optimizer)
+            loss_avg.add(cost)
+            i += 1
+
+            if i % display_interval == 0:
+                print('[%d/%d][%d/%d] Loss: %f' %
+                      (epoch, num_epochs, i, len(train_loader), loss_avg.val()))
+                loss_avg.reset()
+
+        val(net, test_set, criterion)
+
+        # do checkpointing
+        torch.save(net.state_dict(), os.path.join(working_dir, 'netCRNN_{}.pth'.format(epoch)))
+        print('Time per epoch: {} seconds'.format(time.time()-begin))

@@ -36,12 +36,16 @@ class KillFeedCTCGenerator(CTCDataGenerator):
     num_slots = 6
     num_variations = 2
 
-    def __init__(self):
+    def __init__(self, debug=False):
         super(KillFeedCTCGenerator, self).__init__()
         self.label_set = LABEL_SET
         self.save_label_set()
         self.image_width = BOX_PARAMETERS['O']['KILL_FEED_SLOT']['WIDTH']
         self.image_height = BOX_PARAMETERS['O']['KILL_FEED_SLOT']['HEIGHT']
+        self.debug=debug
+        if self.debug:
+            os.makedirs(os.path.join(self.training_directory, 'debug', 'train'), exist_ok=True)
+            os.makedirs(os.path.join(self.training_directory, 'debug', 'val'), exist_ok=True)
         self.slots = range(6)
         self.current_round_id = None
         self.check_set_info()
@@ -57,26 +61,28 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             self.slot_params[s]['y'] = params['Y'] + (params['HEIGHT'] + params['MARGIN']) * (s)
 
     def lookup_data(self, slot_data, time_point):
-        sequence = []
+        raw_sequence = []
         d = slot_data
         if d['headshot'] and not d['ability'].endswith('headshot'):
             d['ability'] += ' headshot'
         if d['first_player'] == 'n/a':
             pass
         else:
-            sequence.append(self.label_set.index(d['first_color']))
-            sequence.append(self.label_set.index(d['first_hero']))
+            raw_sequence.append(d['first_color'])
+            raw_sequence.append(d['first_hero'])
             if d['assisting_heroes']:
                 for h in d['assisting_heroes']:
-                    sequence.append(self.label_set.index(h.lower() + '_assist'))
+                    raw_sequence.append(h.lower() + '_assist')
 
-        sequence.append(self.label_set.index(d['ability']))
+        raw_sequence.append(d['ability'])
         second = d['second_hero']
         if second not in HERO_SET and second+'_npc' in LABEL_SET:
             second += '_npc'
-        sequence.append(self.label_set.index(second))
-        sequence.append(self.label_set.index(d['second_color']))
-        return sequence
+        raw_sequence.append(second)
+        raw_sequence.append(d['second_color'])
+        raw_sequence = [x.replace(' ', '_').replace(':', '') for x in raw_sequence]
+        sequence = [self.label_set.index(x) for x in raw_sequence]
+        return sequence, raw_sequence
 
     def display_current_frame(self, frame, time_point):
         shift = 0
@@ -116,16 +122,16 @@ class KillFeedCTCGenerator(CTCDataGenerator):
         for s in self.slots:
             params = self.slot_params[s]
             if s > len(kf) - 1 or kf[s]['second_hero'] == na_lab:
-                sequence = []
+                sequence, raw_sequence = [], []
                 is_npc = False
             else:
-                sequence = self.lookup_data(kf[s], time_point)
+                sequence, raw_sequence = self.lookup_data(kf[s], time_point)
                 is_npc = kf[s]['second_hero'] not in HERO_SET + ['b.o.b._npc']
 
-            variation_set = [(0, 0)]
+            variation_set = []
             while len(variation_set) < self.num_variations:
-                x_offset = random.randint(-5, 5)
-                y_offset = random.randint(-5, 5)
+                x_offset = random.randint(-4, 4)
+                y_offset = random.randint(-4, 4)
                 if (x_offset, y_offset) in variation_set:
                     continue
                 variation_set.append((x_offset, y_offset))
@@ -147,6 +153,11 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                     index -= self.num_train
                 box = frame[y + y_offset - shift: y + self.image_height + y_offset - shift,
                       x + x_offset: x + self.image_width + x_offset]
+                if self.debug:
+                    if raw_sequence:
+                        filename = '{}_{}.jpg'.format(' '.join(raw_sequence), self.process_index)
+                        cv2.imwrite(os.path.join(self.training_directory, 'debug', pre,
+                                             filename), box)
                 box = np.swapaxes(box, 1, 0)
                 self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
                 self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id

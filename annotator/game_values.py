@@ -22,10 +22,10 @@ COLOR_SET = TRAIN_INFO['colors']
 
 SPECTATOR_MODES = TRAIN_INFO['spectator_modes']
 
-#PLAYER_SET = get_player_list()
+PLAYER_SET = get_player_list()
 
 STATUS_SET = TRAIN_INFO['statuses']
 
-#PLAYER_CHARACTER_SET = get_character_set(PLAYER_SET)
+PLAYER_CHARACTER_SET = get_character_set(PLAYER_SET)
 
 MAP_MODE_SET = TRAIN_INFO['map_modes']
