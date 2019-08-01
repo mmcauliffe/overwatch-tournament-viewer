@@ -69,15 +69,11 @@ class PlayerOCRGenerator(CTCDataGenerator):
                     index -= self.num_train
                 box = frame[y + y_offset: y + self.image_height + y_offset,
                       x + x_offset: x + self.image_width + x_offset]
+                box = np.pad(box,((int(self.image_height/2), int(self.image_height/2)),(0,0),(0,0)), mode='constant', constant_values=0)
                 #if i == 0:
                     #cv2.imshow('gray_{}'.format(s), gray)
                     #cv2.imshow('bw_{}'.format(s), bw)
-                if self.debug:
-                    name = self.names[s]
-                    if name.startswith('blas'):
-                        name = 'blase'
-                    cv2.imwrite(os.path.join(self.training_directory, 'debug', pre, '{}_{}.jpg'.format(name, self.process_index)), box)
-                box = np.swapaxes(box, 1, 0)
+                box = np.transpose(box, axes=(2, 0, 1))
                 self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
 
                 #self.train_mean += box / self.hdf5_file['train_img'].shape[0]
@@ -114,12 +110,10 @@ class PlayerOCRGenerator(CTCDataGenerator):
         self.left_color = r['game']['left_team']['color'].lower()
         self.right_color = r['game']['right_team']['color'].lower()
         train_shape = (
-            self.num_train, int(self.image_width * self.resize_factor), int(self.image_height * self.resize_factor), 3)
+            self.num_train,3, int(self.image_height * self.resize_factor * 2), int(self.image_width * self.resize_factor))
         val_shape = (
-            self.num_val, int(self.image_width * self.resize_factor), int(self.image_height * self.resize_factor), 3)
+            self.num_val, 3,  int(self.image_height * self.resize_factor *  2), int(self.image_width * self.resize_factor))
         self.hdf5_file = h5py.File(self.hd5_path, mode='w')
-        #self.hdf5_file.create_dataset("train_mean", train_shape[1:], np.float32)
-        #self.train_mean = np.zeros(train_shape[1:], np.float32)
         for pre in ['train', 'val']:
             if pre == 'train':
                 shape = train_shape
@@ -130,11 +124,11 @@ class PlayerOCRGenerator(CTCDataGenerator):
             self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
                                           maxshape=(None, shape[1], shape[2], shape[3]))
             self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
-                                          np.uint32, maxshape=(None, self.max_sequence_length),
+                                          np.int16, maxshape=(None, self.max_sequence_length),
                                           fillvalue=len(self.label_set))
             self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8,
                                           maxshape=(None,), fillvalue=1)
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.uint32, maxshape=(None,))
+            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
 
         self.process_index = 0
         self.states = get_player_states(r['id'])

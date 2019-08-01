@@ -917,11 +917,13 @@ class PlayerState(object):
 
     def generate_death_events(self):
         deaths = []
+        print('GENERATING DEATH EVENTS FOR'. self.player)
         for alive_state in self.statuses['alive']:
             if alive_state['status'] == 'dead':
                 deaths.append(
                     {'time_point': alive_state['begin'] + 0.3, 'hero': self.hero_at_time(alive_state['begin']),
                      'color': self.color, 'player': self.player})
+        print(deaths)
         return deaths
 
     def generate_switches(self):

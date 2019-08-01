@@ -19,18 +19,18 @@ from annotator.training.helper import Averager, load_set
 from annotator.models import crnn
 from annotator.training.ctc_helper import train_batch, val
 
-working_dir = r'E:\Data\Overwatch\models\kill_feed_ctc'
+working_dir = r'E:\Data\Overwatch\models\player_ocr'
 os.makedirs(working_dir, exist_ok=True)
 log_dir = os.path.join(working_dir, 'log')
 TEST = True
-train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
+train_dir = r'E:\Data\Overwatch\training_data\player_ocr'
 
 # params
 
 cuda = True
 seed = 1
-batch_size = 128
-test_batch_size = 128
+batch_size = 100
+test_batch_size = 100
 num_epochs = 10
 lr = 0.001 # learning rate for Critic, not used by adadealta
 beta1 = 0.5 # beta1 for adam. default=0.5
@@ -39,7 +39,7 @@ use_adadelta = False # whether to use adadelta (default is rmsprop)
 momentum = 0.5
 log_interval = 10
 image_height = 32
-image_width = 248
+image_width = 64
 num_channels = 3
 num_hidden = 256
 num_workers = 0
@@ -50,19 +50,15 @@ random_sample = True
 use_batched_dataset = True
 use_hdf5 = True
 
-
 random.seed(manualSeed)
 np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
 
 
-
-
 ### TRAINING
 
 if __name__ == '__main__':
-
     label_set = load_set(os.path.join(train_dir, 'labels_set.txt'))
     for i, lab in enumerate(label_set):
         if not lab:
@@ -97,6 +93,7 @@ if __name__ == '__main__':
         elif classname.find('BatchNorm') != -1:
             m.weight.data.normal_(1.0, 0.02)
             m.bias.data.fill_(0)
+
 
     num_classes = len(label_set) + 1
     net = crnn.CRNN(image_height, num_channels, num_classes, num_hidden)

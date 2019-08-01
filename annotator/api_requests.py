@@ -127,7 +127,10 @@ def get_annotate_vods_round_events():
 
 def load_token():
     directory = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(directory,'auth_token')
+    if config.DEV:
+        path = os.path.join(directory,'auth_token_dev')
+    else:
+        path = os.path.join(directory,'auth_token')
     with open(path, 'r') as f:
         token = f.read().strip()
     return token

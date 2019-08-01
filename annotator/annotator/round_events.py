@@ -382,138 +382,6 @@ class KillFeedAnnotator(object):
         return sorted(actual_events, key=lambda x: x['time_point'])
 
 
-class MidAnnotator(object):
-    resize_factor = 0.5
-    time_step = 0.1
-
-    def __init__(self, model_directory, film_format):
-        self.film_format = film_format
-        self.model_directory = model_directory
-        final_output_weights = os.path.join(self.model_directory, 'mid_weights.h5')
-        final_output_json = os.path.join(self.model_directory, 'mid_model.json')
-        with open(final_output_json, 'r') as f:
-            loaded_model_json = f.read()
-        self.model = keras.models.model_from_json(loaded_model_json)
-        self.model.load_weights(final_output_weights)
-        self.params = BOX_PARAMETERS[self.film_format]['MID']
-        self.max_num_sequences = 10
-        self.shape = (self.max_num_sequences, frames_per_seq, int(self.params['HEIGHT'] * self.resize_factor), int(self.params['WIDTH'] * self.resize_factor), 3)
-        self.to_predict = np.zeros(self.shape, dtype=np.uint8)
-        self.process_index = 0
-        self.num_sequences = 0
-        self.begin_time = 0
-        mid_set_files = {
-            'overtime': os.path.join(self.model_directory, 'overtime_set.txt'),
-            'point_status': os.path.join(self.model_directory, 'point_status_set.txt'),
-        }
-
-        mid_end_set_files = {
-            'attacking_color': os.path.join(self.model_directory, 'attacking_color_set.txt'),
-            'map': os.path.join(self.model_directory, 'map_set.txt'),
-            'map_mode': os.path.join(self.model_directory, 'map_mode_set.txt'),
-            'round_number': os.path.join(self.model_directory, 'round_number_set.txt'),
-            'spectator_mode': os.path.join(self.model_directory, 'spectator_mode_set.txt'),
-        }
-
-        self.sets = {}
-
-        for k, v in mid_set_files.items():
-            self.sets[k] = load_set(v)
-
-        self.end_sets = {}
-        for k, v in mid_end_set_files.items():
-            self.end_sets[k] = load_set(v)
-
-        self.statuses = {k: [] for k in list(self.sets.keys()) + list(self.end_sets.keys())}
-
-    def process_frame(self, frame):
-        box = frame[self.params['Y']: self.params['Y'] + self.params['HEIGHT'],
-              self.params['X']: self.params['X'] + self.params['WIDTH']]
-        box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
-        self.to_predict[self.num_sequences, self.process_index, ...] = box[None]
-        self.process_index += 1
-        if self.process_index == frames_per_seq:
-            self.num_sequences += 1
-            self.process_index = 0
-            if self.num_sequences == self.max_num_sequences:
-                self.annotate()
-                self.to_predict = np.zeros(self.shape, dtype=np.uint8)
-                self.num_sequences = 0
-                self.begin_time += self.max_num_sequences * frames_per_seq * self.time_step
-                print(self.begin_time)
-
-    def annotate(self):
-        if self.num_sequences == 0:
-            return
-        lstm_output = self.model.predict([self.to_predict])
-        for i in range(self.num_sequences):
-            for output_ind, (output_key, s) in enumerate(list(self.sets.items()) + list(self.end_sets.items())):
-                if output_key in self.end_sets:
-                    label_inds = lstm_output[output_ind].argmax(axis=1)
-                    lstm_label = s[label_inds[i]]
-                    #print(output_key, lstm_label)
-                    if lstm_label == 'n/a' and output_key != 'attacking_color':
-                        continue
-                    if len(self.statuses[output_key]) == 0:
-                        self.statuses[output_key].append(
-                            {'begin': self.begin_time + time_step * frames_per_seq * (i), 'end': self.begin_time + time_step * frames_per_seq * (i+1), 'status': lstm_label})
-                    else:
-                        if lstm_label == self.statuses[output_key][-1]['status']:
-                            self.statuses[output_key][-1]['end'] = self.begin_time + time_step * frames_per_seq * (i+1)
-                        else:
-                            self.statuses[output_key].append(
-                                {'begin': self.begin_time + time_step * frames_per_seq * (i), 'end': self.begin_time + time_step * frames_per_seq * (i+1),
-                                 'status': lstm_label})
-                else:
-                    label_inds = lstm_output[output_ind].argmax(axis=2)
-                    for t_ind in range(frames_per_seq):
-                        current_time = self.begin_time + (t_ind * time_step) +time_step * frames_per_seq *i
-                        lstm_label = s[label_inds[i, t_ind]]
-                        #print(output_key, lstm_label)
-                        if lstm_label != 'n/a':
-                            if len(self.statuses[output_key]) == 0:
-                                self.statuses[output_key].append({'begin': 0, 'end': 0, 'status': lstm_label})
-                            else:
-                                if lstm_label == self.statuses[output_key][-1]['status']:
-                                    self.statuses[output_key][-1]['end'] = current_time
-                                else:
-                                    self.statuses[output_key].append(
-                                        {'begin': current_time, 'end': current_time, 'status': lstm_label})
-            #cv2.imshow('frame', self.to_predict[i][0])
-            #cv2.waitKey(0)
-
-    def generate_round_properties(self):
-        actual_overtime = []
-        for i, r in enumerate(self.statuses['overtime']):
-            if r['status'] == 'not_overtime' and r['end'] - r['begin'] < 2:
-                continue
-            if len(actual_overtime) and r['status'] == actual_overtime[-1]['status']:
-                actual_overtime[-1]['end'] = r['end']
-            else:
-                if len(actual_overtime) and actual_overtime[-1]['end'] != r['begin']:
-                    actual_overtime[-1]['end'] = r['begin']
-                actual_overtime.append(r)
-        out_props = {}
-        actual_points = []
-        for i, r in enumerate(self.statuses['point_status']):
-            if r['end'] - r['begin'] < 2:
-                continue
-            if len(actual_points) and r['status'] == actual_points[-1]['status']:
-                actual_points[-1]['end'] = r['end']
-            else:
-                if len(actual_points) and actual_points[-1]['end'] != r['begin']:
-                    actual_points[-1]['end'] = r['begin']
-                actual_points.append(r)
-
-        for k in ['attacking_color', 'map', 'map_mode', 'round_number', 'spectator_mode']:
-            counts = defaultdict(float)
-            for r in self.statuses[k]:
-                counts[r['status']] += r['end'] - r['begin']
-            out_props[k] = max(counts, key=lambda x: counts[x])
-        out_props['overtime'] = actual_overtime
-        out_props['points'] = actual_points
-        return out_props
-
 
 class PlayerAnnotator(object):
     time_step = 0.1
@@ -1340,6 +1208,7 @@ def analyze_rounds(vods):
                 slot = 'right_{}'.format(index)
                 data['player'][slot]['player'] = player
             data['round'] = r['id']
+            error
             upload_annotated_round_events(data)
             error
 

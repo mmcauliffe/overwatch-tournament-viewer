@@ -4,8 +4,10 @@ import random
 import cv2
 import heapq
 import numpy as np
+import lmdb
+import pickle
 
-from annotator.data_generation.classes.ctc import CTCDataGenerator
+from annotator.data_generation.classes.ctc import CTCDataGenerator, write_cache
 from annotator.game_values import COLOR_SET, HERO_SET, LABEL_SET
 from annotator.config import BOX_PARAMETERS, na_lab
 from annotator.api_requests import get_kf_events
@@ -35,12 +37,12 @@ class KillFeedCTCGenerator(CTCDataGenerator):
     identifier = 'kill_feed_ctc'
     num_slots = 6
     num_variations = 1
+    data_bytes = 24200
     time_step = 0.5
 
     def __init__(self, debug=False):
-        super(KillFeedCTCGenerator, self).__init__()
+        super(KillFeedCTCGenerator, self).__init__(debug=debug, map_size=50995116277)
         self.label_set = LABEL_SET
-        self.exist_label_set = ['empty', 'full_sized', 'half_sized']
         self.save_label_set()
         self.image_width = BOX_PARAMETERS['O']['KILL_FEED_SLOT']['WIDTH']
         self.image_height = BOX_PARAMETERS['O']['KILL_FEED_SLOT']['HEIGHT']
@@ -52,14 +54,6 @@ class KillFeedCTCGenerator(CTCDataGenerator):
         self.current_round_id = None
         self.check_set_info()
         self.half_size_npcs = False
-
-    def save_label_set(self):
-        super(KillFeedCTCGenerator, self).save_label_set()
-        path = os.path.join(self.training_directory, 'exist_label_set.txt')
-        if not os.path.exists(path):
-            with open(path, 'w', encoding='utf8') as f:
-                for c in self.exist_label_set:
-                    f.write('{}\n'.format(c))
 
     def figure_slot_params(self, r):
         self.slot_params = {}
@@ -91,13 +85,11 @@ class KillFeedCTCGenerator(CTCDataGenerator):
         raw_sequence.append(second)
         raw_sequence.append(d['second_color'])
         raw_sequence = [x for x in raw_sequence]
-        sequence = [self.label_set.index(x) for x in raw_sequence]
-        return sequence, raw_sequence
+        return raw_sequence
 
     def display_current_frame(self, frame, time_point):
         shift = 0
         kf = construct_kf_at_time(self.states, time_point)
-        show = False
         for slot in self.slots:
             if isinstance(slot, (list, tuple)):
                 slot_name = '_'.join(map(str, slot))
@@ -117,11 +109,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                   x: x + self.image_width]
             cv2.imshow('{}_{}'.format(self.identifier, slot_name), box)
             if self.half_size_npcs and is_npc:
-                shift += int(self.image_height /2)
-                show = True
-        if show:
-            print(kf)
-            cv2.waitKey()
+                shift += int(self.image_height /4) + 5
 
     def process_frame(self, frame, time_point):
         if not self.generate_data:
@@ -133,16 +121,19 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             return
 
         kf = construct_kf_at_time(self.states, time_point)
+        if not kf:
+            return
         shift = 0
         for s in self.slots:
             params = self.slot_params[s]
             if s > len(kf) - 1 or kf[s]['second_hero'] == na_lab:
-                sequence, raw_sequence = [], []
+                raw_sequence = []
                 is_npc = False
             else:
-                sequence, raw_sequence = self.lookup_data(kf[s], time_point)
+                raw_sequence = self.lookup_data(kf[s], time_point)
                 is_npc = kf[s]['second_hero'] not in HERO_SET + ['b.o.b._npc']
-
+            if not raw_sequence:
+                continue
             variation_set = []
             while len(variation_set) < self.num_variations:
                 x_offset = random.randint(-4, 4)
@@ -158,39 +149,49 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             #    y -= int(self.image_height / 4) - 2
 
             for i, (x_offset, y_offset) in enumerate(variation_set):
-                if self.process_index > len(self.indexes) - 1:
-                    continue
-                index = self.indexes[self.process_index]
-                if index < self.num_train:
-                    pre = 'train'
-                else:
-                    pre = 'val'
-                    index -= self.num_train
+
                 box = frame[y + y_offset - shift: y + self.image_height + y_offset - shift,
                       x + x_offset: x + self.image_width + x_offset]
-                if self.debug:
-                    if raw_sequence:
-                        filename = '{}_{}.jpg'.format(' '.join(raw_sequence), self.process_index)
-                        cv2.imwrite(os.path.join(self.training_directory, 'debug', pre,
-                                             filename), box)
                 box = np.transpose(box, axes=(2, 0, 1))
-                self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
-                self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
-                # self.train_mean += box / self.hdf5_file['train_img'].shape[0]
-                sequence_length = len(sequence)
-                if sequence:
-                    self.hdf5_file["{}_label_sequence_length".format(pre)][index] = sequence_length
-                    self.hdf5_file["{}_label_sequence".format(pre)][index, 0:len(sequence)] = sequence
-                    if self.half_size_npcs and is_npc:
-                        label = 'half_sized'
-                    else:
-                        label = 'full_sized'
+                train_check = random.random() <= 0.8
+                if train_check:
+                    pre = 'train'
+                    index = self.previous_train_count
+                    image_key = 'image-%09d' % index
+                    label_key = 'label-%09d' % index
+                    round_key = 'round-%09d' % index
+                    time_point_key = 'time_point-%09d' % index
+                    self.train_cache[image_key] = pickle.dumps(box)
+                    self.train_cache[label_key] = ','.join(raw_sequence)
+                    self.train_cache[round_key] = str(self.current_round_id)
+                    self.train_cache[time_point_key] = '{:.1f}'.format(time_point)
+                    if len(self.train_cache) >= 4000:
+                        write_cache(self.train_env, self.train_cache)
+                        self.train_cache = {}
+                    self.previous_train_count += 1
                 else:
-                    label = 'empty'
-                self.hdf5_file["{}_exist_label".format(pre)][index] = self.exist_label_set.index(label)
+                    pre = 'val'
+                    index = self.previous_val_count
+                    image_key = 'image-%09d' % index
+                    label_key = 'label-%09d' % index
+                    round_key = 'round-%09d' % index
+                    time_point_key = 'time_point-%09d' % index
+                    self.val_cache[image_key] = pickle.dumps(box)
+                    self.val_cache[label_key] = ','.join(raw_sequence)
+                    self.val_cache[round_key] = str(self.current_round_id)
+                    self.val_cache[time_point_key] = '{:.1f}'.format(time_point)
+                    if len(self.val_cache) >= 4000:
+                        write_cache(self.val_env, self.val_cache)
+                        self.val_cache = {}
+                    self.previous_val_count += 1
+                if self.debug:
+                    filename = '{}_{}.jpg'.format(' '.join(raw_sequence), self.process_index)
+                    cv2.imwrite(os.path.join(self.training_directory, 'debug', pre,
+                                         filename), box)
+
                 self.process_index += 1
             if self.half_size_npcs and is_npc:
-                shift += int(self.image_height /2)
+                shift += int(self.image_height /4) + 5
         if time_point % 5 == 0:
             self.states = [x for x in self.states if x['time_point'] > time_point - 8]
 
@@ -198,47 +199,18 @@ class KillFeedCTCGenerator(CTCDataGenerator):
         self.states = get_kf_events(r['id'])
 
     def add_new_round_info(self, r):
-        self.current_round_id = r['id']
-        self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
-            self.generate_data = False
+        super(KillFeedCTCGenerator, self).add_new_round_info(r)
+        if not self.generate_data:
             return
-        self.get_data(r)
         self.ranges = get_event_ranges(self.states, r['end'] - r['begin'])
+
+    def calculate_map_size(self, rounds):
         num_frames = 0
-        for rd in self.ranges:
-            expected_duration = rd['end'] - rd['begin']
-            expected_frame_count = expected_duration / self.time_step
-            num_frames += (int(expected_frame_count) + 1) * self.num_slots
-
-        num_frames *= self.num_variations
-        self.num_train = int(num_frames * 0.8)
-        self.num_val = num_frames - self.num_train
-        self.analyzed_rounds.append(r['id'])
-        self.current_round_id = r['id']
-        self.generate_data = True
-        self.figure_slot_params(r)
-
-        self.indexes = random.sample(range(num_frames), num_frames)
-
-        train_shape = (self.num_train, 3, self.image_height,self.image_width)
-        val_shape = (self.num_val, 3, self.image_height, self.image_width)
-        self.hdf5_file = h5py.File(self.hd5_path, mode='w')
-        for pre in ['train', 'val']:
-            if pre == 'train':
-                shape = train_shape
-                count = self.num_train
-            else:
-                shape = val_shape
-                count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
-                                          maxshape=(None, shape[1], shape[2], shape[3]))
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
-            self.hdf5_file.create_dataset("{}_exist_label".format(pre), (count,), np.uint8, maxshape=(None,))
-            self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
-                                          np.int16, maxshape=(None, self.max_sequence_length),
-                                          fillvalue=len(self.label_set))
-            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8,
-                                          maxshape=(None,), fillvalue=1)
-
-        self.process_index = 0
+        for r in rounds:
+            ranges = get_event_ranges(get_kf_events(r['id']), r['end'] - r['begin'])
+            for rd in ranges:
+                num_frames +=int((rd['end'] - rd['begin']) / self.time_step)
+        overall = num_frames * self.data_bytes * 10 * self.num_variations * self.num_slots
+        self.train_map_size = int(overall * 0.82)
+        self.val_map_size = int(overall * 0.22)
+        print(self.train_map_size)

@@ -3,8 +3,16 @@ local_directory = r'E:\Data\Overwatch\raw_data\annotations\matches'
 vod_directory = r'E:\Data\Overwatch\raw_data\vods'
 training_data_directory = r'E:\Data\Overwatch\training_data'
 
-site_url = 'http://localhost:8000/'
-site_url = 'https://omnicintelligence.com/'
+DEV = False
+
+if DEV:
+    print()
+    print('WARNING: Using the local dev server!')
+    print()
+    print()
+    site_url = 'http://localhost:8000/'
+else:
+    site_url = 'https://omnicintelligence.com/'
 
 api_url = site_url + 'api/'
 
@@ -69,14 +77,20 @@ BASE_LEFT_X = 29
 BASE_RIGHT_X = 832
 BASE_PLAYER_MARGIN = 7
 
-MID_HEIGHT = 100
-MID_WIDTH = 290
+MID_HEIGHT = 96
+MID_WIDTH = 288
+
+REPLAY_HEIGHT = 64
+REPLAY_WIDTH = 208
+
+PAUSE_HEIGHT = 48
+PAUSE_WIDTH = 144
 
 BOX_PARAMETERS = {
     'O': {
         'MID': {
-            'X': 495,
-            'Y': 35,
+            'X': 496,
+            'Y': 37,
             'HEIGHT': MID_HEIGHT,
             'WIDTH': MID_WIDTH,
         },
@@ -116,22 +130,22 @@ BOX_PARAMETERS = {
         'REPLAY': {
             'X': 105,
             'Y': 110,
-            'WIDTH': 210,
-            'HEIGHT': 60,
+            'WIDTH': REPLAY_WIDTH,
+            'HEIGHT': REPLAY_HEIGHT,
         },
         'PAUSE': {
             'X': 550,
             'Y': 310,
-            'WIDTH': 150,
-            'HEIGHT': 40,
+            'WIDTH': PAUSE_WIDTH,
+            'HEIGHT': PAUSE_HEIGHT,
         }
     }
 }
 
 BOX_PARAMETERS['K'] = {
     'MID': {
-        'X': 495,
-        'Y': 43,
+        'X': 496,
+        'Y': 45,
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
@@ -171,21 +185,21 @@ BOX_PARAMETERS['K'] = {
     'REPLAY': {
         'X': 105,
         'Y': 110 + 13,
-        'WIDTH': 210,
-        'HEIGHT': 60,
+        'WIDTH': REPLAY_WIDTH,
+        'HEIGHT': REPLAY_HEIGHT,
     },
     'PAUSE': {
         'X': 550,
         'Y': 310 + 13,
-        'WIDTH': 150,
-        'HEIGHT': 40,
+        'WIDTH': PAUSE_WIDTH,
+        'HEIGHT': PAUSE_HEIGHT,
     }
 }
 
 BOX_PARAMETERS['W'] = {
     'MID': {
-        'X': 495,
-        'Y': 34,
+        'X': 496,
+        'Y': 36,
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
@@ -225,21 +239,21 @@ BOX_PARAMETERS['W'] = {
     'REPLAY': {
         'X': 125,
         'Y': 165,
-        'WIDTH': 210,
-        'HEIGHT': 60,
+        'WIDTH': REPLAY_WIDTH,
+        'HEIGHT': REPLAY_HEIGHT,
     },
     'PAUSE': {
         'X': 550,
         'Y': 300,
-        'WIDTH': 190,
-        'HEIGHT': 70,
+        'WIDTH': PAUSE_WIDTH,
+        'HEIGHT': PAUSE_HEIGHT,
     }
 }
 
 BOX_PARAMETERS['2'] = {
     'MID': {
-        'X': 495,
-        'Y': 60,
+        'X': 496,
+        'Y': 62,
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
@@ -279,21 +293,21 @@ BOX_PARAMETERS['2'] = {
     'REPLAY': {
         'X': 145,
         'Y': 150,
-        'WIDTH': 210,
-        'HEIGHT': 60,
+        'WIDTH': REPLAY_WIDTH,
+        'HEIGHT': REPLAY_HEIGHT,
     },
     'PAUSE': {
         'X': 530,
         'Y': 300,
-        'WIDTH': 210,
-        'HEIGHT': 80,
+        'WIDTH': PAUSE_WIDTH,
+        'HEIGHT': PAUSE_HEIGHT,
     }
 }
 
 BOX_PARAMETERS['A'] = {  # Black borders around video feed
     'MID': {
-        'X': 490,
-        'Y': 45,
+        'X': 491,
+        'Y': 47,
         'HEIGHT': MID_HEIGHT,
         'WIDTH': MID_WIDTH,
     },
@@ -326,14 +340,14 @@ BOX_PARAMETERS['A'] = {  # Black borders around video feed
     'REPLAY': {
         'X': 115,
         'Y': 120,
-        'WIDTH': 150,
-        'HEIGHT': 40,
+        'WIDTH': REPLAY_WIDTH,
+        'HEIGHT': REPLAY_HEIGHT,
     },
     'PAUSE': {
         'X': 550,
         'Y': 300,
-        'WIDTH': 190,
-        'HEIGHT': 70,
+        'WIDTH': PAUSE_WIDTH,
+        'HEIGHT': PAUSE_HEIGHT,
     }
 }
 

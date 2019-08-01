@@ -4,32 +4,36 @@ import random
 import cv2
 import numpy as np
 
-from annotator.data_generation.classes.sequence import SequenceDataGenerator
+from annotator.data_generation.classes.base import DataGenerator
 from annotator.config import na_lab, sides, BOX_PARAMETERS
 from annotator.utils import look_up_player_state
 from annotator.api_requests import get_player_states
 from annotator.game_values import HERO_SET, COLOR_SET, STATUS_SET, SPECTATOR_MODES
 
 
-class PlayerStatusGenerator(SequenceDataGenerator):
+class PlayerStatusGenerator(DataGenerator):
     identifier = 'player_status'
     num_slots = 12
-    num_variations = 2
+    num_variations = 1
+    time_step = 0.1
+    secondary_time_step = 0.5
 
     def __init__(self):
         super(PlayerStatusGenerator, self).__init__()
         self.sets = {'hero': [na_lab] + HERO_SET,
                      'ult': [na_lab, 'no_ult', 'using_ult', 'has_ult'],
-                     'alive': [na_lab, 'alive', 'dead'], }
+                     'alive': [na_lab, 'alive', 'dead'],
+                     'side': [na_lab] + sides,
+                     'color': [na_lab] + COLOR_SET,
+                     'spectator_mode': SPECTATOR_MODES,
+                     'status': ['normal', 'asleep', 'frozen', 'hacked', 'stunned']
+                     }
         for s in STATUS_SET:
+            if s in self.sets['status']:
+                continue
             if not s:
                 continue
             self.sets[s] = [na_lab] + ['not_' + s, s]
-        self.end_sets = {
-            # 'player': [na_lab] + PLAYER_SET,
-            'side': [na_lab] + sides,
-            'color': [na_lab] + COLOR_SET, }
-        self.immutable_sets = {'spectator_mode': SPECTATOR_MODES}
         self.save_set_info()
         params = BOX_PARAMETERS['O']['LEFT']
         self.image_width = params['WIDTH']
@@ -54,16 +58,148 @@ class PlayerStatusGenerator(SequenceDataGenerator):
                 self.slot_params[(side, i)]['x'] = p['X'] + (p['WIDTH'] + p['MARGIN']) * i
                 self.slot_params[(side, i)]['y'] = p['Y']
 
-    def add_new_round_info(self, r, previous_train_count=0, previous_val_count=0):
-        self.spec_mode = r['spectator_mode'].lower()
-        self.immutable_set_values = {'spectator_mode': self.spec_mode}
-        super(PlayerStatusGenerator, self).add_new_round_info(r)
+    def get_data(self, r):
+        self.status_state = {}
+        self.states = get_player_states(r['id'])
+        for slot in self.slots:
+            print(slot)
+            self.status_state[slot] = []
+            for s in STATUS_SET:
+                if not s:
+                    continue
+                intervals = self.states[slot[0]][str(slot[1])][s]
+                if len(intervals) == 1:
+                    continue
+                for interval in intervals:
+                    if interval['status'].startswith('not_'):
+                        continue
+                    if not self.status_state[slot]:
+                        self.status_state[slot].append({'begin':interval['begin'], 'end':interval['end']})
+                    else:
+                        for existing_interval in self.status_state[slot]:
+                            if existing_interval['end'] >= interval['begin'] >= existing_interval['begin']:
+                                existing_interval['end'] = interval['end']
+                                break
+                            elif existing_interval['end'] >= interval['end'] >= existing_interval['begin']:
+                                existing_interval['begin'] = interval['begin']
+                                break
+                        else:
+                            self.status_state[slot].append({'begin': interval['begin'], 'end': interval['end']})
+
+                    print(interval)
+            print(self.status_state[slot])
+
+    def check_status(self, slot, time_point):
+        for interval in self.status_state[slot]:
+            if interval['end'] >= time_point >= interval['begin']:
+                return True
+        return False
+
+    def process_frame(self, frame, time_point):
         if not self.generate_data:
             return
+        for slot in self.slots:
+            is_status = self.check_status(slot, time_point)
+            if not is_status:
+                if time_point % self.secondary_time_step != 0:
+                    continue
+            d = self.lookup_data(slot, time_point)
+            params = self.slot_params[slot]
+            x = params['x']
+            y = params['y']
+            variation_set = []
+            while len(variation_set) < self.num_variations:
+                x_offset = random.randint(-4, 4)
+                y_offset = random.randint(-4, 4)
+                if (x_offset, y_offset) in variation_set:
+                    continue
+                variation_set.append((x_offset, y_offset))
+            for i, (x_offset, y_offset) in enumerate(variation_set):
+                if self.process_index > len(self.indexes) - 1:
+                    continue
+                index = self.indexes[self.process_index]
+                if index < self.num_train:
+                    pre = 'train'
+                else:
+                    pre = 'val'
+                    index -= self.num_train
+                box = frame[y + y_offset: y + self.image_height + y_offset,
+                      x + x_offset: x + self.image_width + x_offset]
+                if self.resize_factor != 1:
+                    box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
+                #if is_status:
+                #    cv2.imshow('frame_{}'.format(slot), box)
+                #    print(time_point)
+                #    print(d)
+                #    cv2.waitKey()
+                box = np.transpose(box, axes=(2, 0, 1))
+                self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
+                self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
 
-        self.states = get_player_states(r['id'])
+                self.hdf5_file["{}_time_point".format(pre)][index] = time_point
+
+                for k, s in self.sets.items():
+                    self.hdf5_file["{}_{}_label".format(pre, k)][index] = s.index(d[k])
+
+                self.process_index += 1
+                if self.debug:
+
+                    filename = '{}_{}.jpg'.format(' '.join(d.values()), index).replace(':', '')
+                    cv2.imwrite(os.path.join(self.training_directory, 'debug', pre,
+                                         filename), np.transpose(box, axes=(1,2,0)))
+
+    def add_new_round_info(self, r):
+        self.current_round_id = r['id']
+        self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
+        if os.path.exists(self.hd5_path):
+            self.generate_data = False
+            return
+        self.get_data(r)
+
+        num_frames = 0
+        expected_duration = 0
+        for beg, end in r['sequences']:
+            expected_duration += end - beg
+        for slot in self.slots:
+            status_duration = round(sum([x['end'] - x['begin'] for x in self.status_state[slot]]), 1)
+            normal_duration = expected_duration - status_duration
+            normal_frame_count = int(normal_duration / self.secondary_time_step)
+            status_frame_count = int(status_duration / self.time_step)
+            num_frames += normal_frame_count + status_frame_count
+            print(status_duration, status_frame_count)
+        num_frames *= self.num_variations
+        self.num_train = int(num_frames * 0.8)
+        self.num_val = num_frames - self.num_train
+        self.analyzed_rounds.append(r['id'])
+        self.current_round_id = r['id']
+        self.generate_data = True
+        self.figure_slot_params(r)
+
+        self.indexes = random.sample(range(num_frames), num_frames)
+
+        train_shape = (self.num_train, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
+        val_shape = (self.num_val, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
+        self.hdf5_file = h5py.File(self.hd5_path, mode='w')
+
+        for pre in ['train', 'val']:
+            if pre == 'train':
+                shape = train_shape
+                count = self.num_train
+            else:
+                shape = val_shape
+                count = self.num_val
+            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
+                                          maxshape=(None, shape[1], shape[2], shape[3]))
+            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
+            self.hdf5_file.create_dataset("{}_time_point".format(pre), (count,), np.float, maxshape=(None,))
+            for k, s in self.sets.items():
+                self.hdf5_file.create_dataset("{}_{}_label".format(pre, k), (count,), np.uint8, maxshape=(None,))
+
+        self.process_index = 0
+
         self.left_color = r['game']['left_team']['color'].lower()
         self.right_color = r['game']['right_team']['color'].lower()
+        self.spec_mode = r['spectator_mode'].lower()
 
     def lookup_data(self, slot, time_point):
         d = look_up_player_state(slot[0], slot[1], time_point, self.states)

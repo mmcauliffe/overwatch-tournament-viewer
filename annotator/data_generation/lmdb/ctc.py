@@ -4,15 +4,13 @@ import random
 import cv2
 import numpy as np
 
-from annotator.data_generation.classes.base import DataGenerator
+from annotator.data_generation.classes.base import DataGenerator, write_cache
 from annotator.config import na_lab
 
 
 class CTCDataGenerator(DataGenerator):
-    max_sequence_length = 12
-
-    def __init__(self):
-        super(CTCDataGenerator, self).__init__()
+    def __init__(self, debug=False, map_size=10995116277):
+        super(CTCDataGenerator, self).__init__(debug, map_size)
         self.label_set = []
         self.image_width = 0
         self.image_height = 0
@@ -45,49 +43,9 @@ class CTCDataGenerator(DataGenerator):
                     f.write('{}\n'.format(c))
 
     def add_new_round_info(self, r):
-        self.current_round_id = r['id']
-        self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
-            self.generate_data = False
+        super(CTCDataGenerator, self).add_new_round_info(r)
+        if not self.generate_data:
             return
-        num_frames = 0
-        for beg, end in r['sequences']:
-            print(beg, end)
-            expected_frame_count = int((end - beg) / self.time_step)
-            num_frames += (int(expected_frame_count) + 1) * self.num_slots
-
-        num_frames *= self.num_variations
-        self.num_train = int(num_frames * 0.8)
-        self.num_val = num_frames - self.num_train
-        self.generate_data = True
-        self.figure_slot_params(r)
-        self.analyzed_rounds.append(r['id'])
-
-        self.indexes = random.sample(range(num_frames), num_frames)
-
-        train_shape = (
-            self.num_train, 3, int(self.image_width * self.resize_factor), int(self.image_height * self.resize_factor))
-        val_shape = (
-            self.num_val, 3, int(self.image_width * self.resize_factor), int(self.image_height * self.resize_factor))
-        self.hdf5_file = h5py.File(self.hd5_path, mode='w')
-
-        for pre in ['train', 'val']:
-            if pre == 'train':
-                shape = train_shape
-                count = self.num_train
-            else:
-                shape = val_shape
-                count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
-                                          maxshape=(None, shape[1], shape[2], shape[3]))
-            self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
-                                          np.int16, maxshape=(None, self.max_sequence_length),
-                                          fillvalue=len(self.label_set))
-            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8,
-                                          maxshape=(None,), fillvalue=1)
-            self.hdf5_file.create_dataset("{}_spectator_mode".format(pre), (count,), np.uint8, maxshape=(None,))
-
-        self.process_index = 0
 
     def process_frame(self, frame, time_point):
         #cv2.imshow('frame', frame)

@@ -1,4 +1,5 @@
 import torch.nn as nn
+from annotator.datasets.ctc_dataset import LabelConverter
 
 
 class BidirectionalLSTM(nn.Module):
@@ -25,7 +26,6 @@ class CRNN(nn.Module):
     def __init__(self, imgH, nc, nclass, nh, n_rnn=2, leakyRelu=False):
         super(CRNN, self).__init__()
         assert imgH % 16 == 0, 'imgH has to be a multiple of 16'
-
         ks = [3, 3, 3, 3, 3, 3, 2]
         ps = [1, 1, 1, 1, 1, 1, 0]
         ss = [1, 1, 1, 1, 1, 1, 1]
@@ -85,3 +85,20 @@ class CRNN(nn.Module):
         for g in grad_input:
             g[g != g] = 0  # replace all nan/inf in gradients to zero
 
+
+class PlayerNameCRNN(CRNN):
+    num_hidden = 256
+
+    def __init__(self, label_set):
+        self.label_set = label_set
+        self.converter = LabelConverter(label_set)
+        super(PlayerNameCRNN, self).__init__(32, 3, len(label_set) + 1, self.num_hidden)
+
+
+class KillFeedCRNN(CRNN):
+    num_hidden = 256
+
+    def __init__(self, label_set):
+        self.label_set = label_set
+        self.converter = LabelConverter(label_set)
+        super(KillFeedCRNN, self).__init__(32, 3, len(label_set) + 1, self.num_hidden)

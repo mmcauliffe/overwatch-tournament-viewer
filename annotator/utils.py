@@ -112,14 +112,18 @@ def look_up_player_state(side, index, time, states):
     if ind == len(states['alive']):
         ind -= 1
     data['alive'] = states['alive'][ind]['status']
-
+    data['status'] = 'normal'
     for s in STATUS_SET:
         if not s:
             continue
         ind = np.searchsorted(states[s+'_array'], time, side="right")
         if ind == len(states[s]):
             ind -= 1
-        data[s] = states[s][ind]['status']
+        if s in ['asleep', 'frozen', 'hacked', 'stunned']:
+            if not states[s][ind]['status'].startswith('not_'):
+                data['status'] = s
+        else:
+            data[s] = states[s][ind]['status']
 
     ind = np.searchsorted(states['hero_array'], time, side="right")
     if ind == len(states['hero']):
@@ -323,7 +327,6 @@ def get_event_ranges(events, end):
             ranges[-1]['end'] = round(e['time_point'] + window, 1)
     if ranges[-1]['end'] > end:
         ranges[-1]['end'] = end
-    print(ranges)
     return ranges
 
 
