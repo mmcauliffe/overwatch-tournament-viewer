@@ -44,10 +44,11 @@ def predict_on_video(v, r, sequences):
     left_color = r['game']['left_team']['color'].lower()
     right_color = r['game']['right_team']['color'].lower()
     spec = spec_modes[r['game']['match']['event']['spectator_mode']].lower()
-    status_annotator = PlayerStatusAnnotator(v['film_format'], player_model_dir, device, left_color, right_color, player_names, spectator_mode=spec)
+    film_format = r['game']['match']['event']['film_format']
+    status_annotator = PlayerStatusAnnotator(film_format, player_model_dir, device, left_color, right_color, player_names, spectator_mode=spec)
     #name_annotator = PlayerNameAnnotator(v['film_format'], player_ocr_model_dir, device)
-    kill_feed_annotator = KillFeedAnnotator(v['film_format'], kf_ctc_model_dir, kf_exists_model_dir, device, spectator_mode=spec)
-    mid_annotator = MidAnnotator(v['film_format'], mid_model_dir, device)
+    kill_feed_annotator = KillFeedAnnotator(film_format, kf_ctc_model_dir, kf_exists_model_dir, device, spectator_mode=spec)
+    mid_annotator = MidAnnotator(film_format, mid_model_dir, device)
     for s in sequences:
         print(s)
         time_step = 0.1
@@ -163,7 +164,7 @@ def analyze_rounds(vods):
             data['round'] = r['id']
             print('DATA')
             print(data)
-            error
+            #error
             print(upload_annotated_round_events(data))
             error
 

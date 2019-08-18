@@ -44,11 +44,11 @@ class Team(object):
 
 
 class PlayerState(object):
-    def __init__(self, player, statuses):
+    def __init__(self, player, statuses, color=None):
         self.player = player
         self.statuses = statuses
         self.name = statuses['player_name']
-        self.color = self.statuses['color'][0]['status']
+        self.color = color
 
     def hero_at_time(self, time_point):
         for hero_state in self.statuses['hero']:
@@ -271,14 +271,19 @@ class PlayerStatusAnnotator(BaseAnnotator):
             'status': os.path.join(model_directory, 'status_set.txt'),
             'antiheal': os.path.join(model_directory, 'antiheal_set.txt'),
             'immortal': os.path.join(model_directory, 'immortal_set.txt'),
-            'color': os.path.join(model_directory, 'color_set.txt'),
 
         }
-        spectator_mode_set = load_set(os.path.join(model_directory, 'spectator_mode_set.txt'))
         sets = {}
         for k, v in set_paths.items():
             sets[k] = load_set(v)
-        self.model = StatusCNN(sets, spectator_mode_set)
+        input_set_files = {
+            'color': os.path.join(model_directory, 'color_set.txt'),
+            'spectator_mode': os.path.join(model_directory, 'spectator_mode_set.txt'),
+             }
+        input_sets = {}
+        for k, v in input_set_files.items():
+            input_sets[k] = load_set(v)
+        self.model = StatusCNN(sets, input_sets)
         self.model.load_state_dict(torch.load(os.path.join(model_directory, 'model.pth')))
         self.model.eval()
         for p in self.model.parameters():
@@ -290,9 +295,13 @@ class PlayerStatusAnnotator(BaseAnnotator):
                       int(self.params['WIDTH'] * self.resize_factor))
         self.images = Variable(torch.FloatTensor(self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
                       int(self.params['WIDTH'] * self.resize_factor)).to(device))
-
-        self.spectator_modes = Variable(torch.LongTensor(self.batch_size).to(device))
-        self.spectator_modes[:] = spectator_mode_set.index(self.spectator_mode)
+        self.inputs = {}
+        self.inputs['spectator_mode'] = Variable(torch.LongTensor(self.batch_size).to(device))
+        self.inputs['spectator_mode'][:] = input_sets['spectator_mode'].index(self.spectator_mode)
+        self.inputs['left_color']  = Variable(torch.LongTensor(self.batch_size).to(device))
+        self.inputs['left_color'][:] = input_sets['color'].index(self.left_team_color)
+        self.inputs['right_color']  = Variable(torch.LongTensor(self.batch_size).to(device))
+        self.inputs['right_color'][:] = input_sets['color'].index(self.right_team_color)
         for s in self.slot_params.keys():
             self.to_predict[s] = np.zeros(self.shape, dtype=np.uint8)
             self.statuses[s] = {k: [] for k in list(self.model.sets.keys())}
@@ -322,7 +331,6 @@ class PlayerStatusAnnotator(BaseAnnotator):
                   x: x + self.params['WIDTH']]
             #cv2.imshow('frame_{}'.format(s), box)
 
-            #cv2.imshow('bw_{}'.format(s), bw)
             box = np.transpose(box, axes=(2, 0, 1))
             self.to_predict[s][self.process_index, ...] = box[None]
         #cv2.waitKey()
@@ -344,7 +352,10 @@ class PlayerStatusAnnotator(BaseAnnotator):
             #print(s)
             b = time.time()
             loadData(self.images, torch.from_numpy(self.to_predict[s]).float())
-            predicteds = self.model({'image': self.images, 'spectator_mode': self.spectator_modes[:self.images.size(0)]})
+            ins = {'image': self.images, 'spectator_mode': self.inputs['spectator_mode'][:self.images.size(0)],
+                   'color':self.inputs['{}_color'.format(s[0])][:self.images.size(0)]}
+
+            predicteds = self.model(ins)
             #print('got predictions:', time.time()-b)
             b = time.time()
             for k, v in predicteds.items():
@@ -373,6 +384,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
 
     def generate_teams(self):
         teams = {'left': {}, 'right': {}}
+        colors ={'left': self.left_team_color, 'right': self.right_team_color}
         for slot, status_dict in self.statuses.items():
             side, ind = slot
             new_statuses = {}
@@ -383,15 +395,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
                 new_statuses['color'] = self.right_team_color
 
             for k, v in status_dict.items():
-                if k == 'color':
-                    new_v = defaultdict(float)
-                    begin =v[0]['begin']
-                    end = v[-1]['end']
-                    for i in v:
-                        new_v[i['status']] += i['end'] - i['begin']
-                    new_v = max(new_v.keys(), key=lambda x: new_v[x])
-                    new_statuses[k] = [{'begin': begin, 'end': end, 'status':new_v}]
-                elif k == 'hero':
+                if k == 'hero':
                     new_v = []
                     threshold = 5
                     for i, x in enumerate(v):
@@ -443,7 +447,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             new_statuses['revive_events'] = revive_events
             for k2, v2 in new_statuses.items():
                 print(k2, v2)
-            teams[side][ind] = PlayerState(slot, new_statuses)
+            teams[side][ind] = PlayerState(slot, new_statuses, color=colors[side])
         left_team = Team('left', teams['left'])
         left_team.color = self.left_team_color
         for p, v in left_team.player_states.items():

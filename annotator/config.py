@@ -265,27 +265,27 @@ BOX_PARAMETERS['2'] = {
 },
     'KILL_FEED': {
         'X': 1280 - 20 - 248,
-        'Y': 136,
+        'Y': 140,
         'WIDTH': 248,
         'HEIGHT': 256
     },
     'KILL_FEED_SLOT': {
         'X': 1280 - 20 - 248,
-        'Y': 136,
+        'Y': 140,
         'WIDTH': 248,
         'HEIGHT': 32,
-        'MARGIN': 2
+        'MARGIN': 4
     },
     'LEFT': {
         'X': 31,
-        'Y': 67,
+        'Y': 72,
         'WIDTH': 64,
         'HEIGHT': 64,
         'MARGIN': 7,
     },
     'RIGHT': {
         'X': 827,
-        'Y': 67,
+        'Y': 72,
         'WIDTH': 64,
         'HEIGHT': 64,
         'MARGIN': 7,

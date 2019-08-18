@@ -39,6 +39,8 @@ class BaseAnnotator(object):
         #    return
         box = frame[self.params['Y']: self.params['Y'] + self.params['HEIGHT'],
               self.params['X']: self.params['X'] + self.params['WIDTH']]
+        #cv2.imshow('frame', box)
+        #cv2.waitKey()
         if self.resize_factor:
             box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
         box = np.transpose(box, axes=(2, 0, 1))

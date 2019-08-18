@@ -147,12 +147,12 @@ class KillFeedAnnotator(BaseAnnotator):
             y = params['y']
             box = frame[y - shift: y + self.params['HEIGHT'] - shift,
                   x: x + self.params['WIDTH']]
-
-            #cv2.imshow('bw_{}'.format(s), bw)
-            #cv2.imshow('slot_{}'.format(s), box)
-            box = np.transpose(box, axes=(2, 0, 1))
+            if show:
+                #cv2.imshow('bw_{}'.format(s), bw)
+                cv2.imshow('slot_{}'.format(s), box)
+                #cv2.waitKey()
             #b = time.time()
-            image = torch.from_numpy(box[None]).float().to(self.device)
+            image = torch.from_numpy(np.transpose(box, axes=(2, 0, 1))[None]).float().to(self.device)
             #print('load exist image', time.time()-b)
             #b = time.time()
             predicteds = self.exists_model({'image': image})
@@ -196,16 +196,6 @@ class KillFeedAnnotator(BaseAnnotator):
             d = [self.model.label_set[x - 1] for x in preds[start_ind:end_ind] if x != 0]
             #print(d)
             cur_kf[s] = self.convert_kf_ctc_output(d)
-            # FIXME
-            if cur_kf[s]['first_color'] == 'red':
-                cur_kf[s]['first_color'] = 'white'
-            if cur_kf[s]['first_color'] == 'blue':
-                cur_kf[s]['first_color'] = 'green'
-
-            if cur_kf[s]['second_color'] == 'red':
-                cur_kf[s]['second_color'] = 'white'
-            if cur_kf[s]['second_color'] == 'blue':
-                cur_kf[s]['second_color'] = 'green'
         if cur_kf and show:
             print(cur_kf)
             cv2.waitKey()
@@ -292,10 +282,6 @@ class KillFeedAnnotator(BaseAnnotator):
                 #if 280 <= k['time_point'] <= 281:
                 #    print(e)
                 if e['first_hero'] != 'n/a':
-                    if left_team_white and e['first_color'] != 'white':
-                        e['first_color'] = right_color
-                    if right_team_white and e['first_color'] != 'white':
-                        e['first_color'] = left_color
                     if e['first_color'] not in [left_color, right_color]:
                         continue
                     if e['first_color'] == left_color:
