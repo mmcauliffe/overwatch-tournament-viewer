@@ -90,12 +90,14 @@ class CTCHDF5Dataset(Dataset):
         outputs = {}
         with h5py.File(path, 'r') as hf5:
             lengths = hf5["{}_label_sequence_length".format(self.pre)][real_index:real_index+self.batch_size]
-            im= hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            im = hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            specs = hf5['{}_spectator_mode_label'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             labs = hf5["{}_label_sequence".format(self.pre)][real_index:real_index+self.batch_size, ...].astype(np.int16)
             # For removing all blank images
             inds = lengths != 1
 
             im = im[inds]
+            specs = specs[inds]
             labs = labs[inds]
             lengths = lengths[inds]
 
@@ -104,6 +106,7 @@ class CTCHDF5Dataset(Dataset):
             labs = labs[labs != self.blank_ind]
             labs += 1
             inputs['image']= torch.from_numpy(im).float()
+            inputs['spectator_mode'] = torch.from_numpy(specs).long()
             outputs['the_labels'] = torch.from_numpy(labs).long()
             outputs['label_length'] = torch.from_numpy(lengths).long()
         if next_file:
@@ -112,11 +115,13 @@ class CTCHDF5Dataset(Dataset):
             with h5py.File(next_path, 'r') as hf5:
                 lengths = hf5["{}_label_sequence_length".format(self.pre)][0:from_next]
                 im= hf5['{}_img'.format(self.pre)][0:from_next, ...]
+                specs= hf5['{}_spectator_mode_label'.format(self.pre)][0:from_next, ...]
                 labs = hf5["{}_label_sequence".format(self.pre)][0:from_next, ...].astype(np.int16)
                 # For removing all blank images
                 inds = lengths != 1
 
                 im = im[inds]
+                specs = specs[inds]
                 labs = labs[inds]
                 lengths = lengths[inds]
 
@@ -124,7 +129,9 @@ class CTCHDF5Dataset(Dataset):
                 labs = labs.reshape(labs.shape[0] * labs.shape[1])
                 labs = labs[labs != self.blank_ind]
                 labs += 1
-                inputs['image']= torch.cat((inputs['image'], torch.from_numpy(im).float()), 0)
+                inputs['image' ]= torch.cat((inputs['image'], torch.from_numpy(im).float()), 0)
+                inputs['spectator_mode'] = torch.cat((inputs['spectator_mode'], torch.from_numpy(specs).long()), 0)
+
                 outputs['the_labels'] = torch.cat((outputs['the_labels'], torch.from_numpy(labs).long()), 0)
                 outputs['label_length'] = torch.cat((outputs['label_length'], torch.from_numpy(lengths).long()), 0)
 

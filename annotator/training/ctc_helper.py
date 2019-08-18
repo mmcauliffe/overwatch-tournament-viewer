@@ -7,22 +7,24 @@ def loadData(v, data):
     v.resize_(data.size()).copy_(data)
 
 
-def train_batch(net, train_iter, device, criterion, optimizer,image, text, length, use_batched_dataset=False):
+def train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length, use_batched_dataset=False):
     data = train_iter.next()
 
     inputs, outputs = data
     cpu_images = inputs['image'][0]
+    cpu_specs = inputs['spectator_mode'][0]
     cpu_texts = outputs['the_labels'][0]
     cpu_lengths = outputs['label_length'][0]
     batch_size = cpu_images.size(0)
     if not batch_size:
         return
     loadData(image, cpu_images)
+    loadData(spectator_modes, cpu_specs)
     loadData(text, cpu_texts)
     loadData(length, cpu_lengths)
 
     optimizer.zero_grad()
-    preds = net(image)
+    preds = net(image, spectator_modes)
     preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
 
     cost = criterion(preds, text, preds_size, length) / batch_size
@@ -31,7 +33,7 @@ def train_batch(net, train_iter, device, criterion, optimizer,image, text, lengt
     optimizer.step()
     return cost
 
-def val(net, val_loader, device, criterion, working_dir, best_val_loss, converter, image, text, length, use_batched_dataset=False):
+def val(net, val_loader, device, criterion, working_dir, best_val_loss, converter, image, spectator_modes, text, length, use_batched_dataset=False):
     print('Start val')
     n_test_disp = 10
     for p in net.parameters():
@@ -50,6 +52,7 @@ def val(net, val_loader, device, criterion, working_dir, best_val_loss, converte
 
         inputs, outputs = data
         cpu_images = inputs['image'][0]
+        cpu_specs = inputs['spectator_mode'][0]
         cpu_texts = outputs['the_labels'][0]
         cpu_lengths = outputs['label_length'][0]
 
@@ -57,10 +60,11 @@ def val(net, val_loader, device, criterion, working_dir, best_val_loss, converte
         if not batch_size:
             continue
         loadData(image, cpu_images)
+        loadData(spectator_modes, cpu_specs)
         loadData(text, cpu_texts)
         loadData(length, cpu_lengths)
 
-        preds = net(image)
+        preds = net(image, spectator_modes)
         preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
 
         cost = criterion(preds, text, preds_size, length) / batch_size

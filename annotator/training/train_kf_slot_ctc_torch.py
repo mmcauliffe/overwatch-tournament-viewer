@@ -58,11 +58,11 @@ torch.manual_seed(manualSeed)
 
 
 
-
 ### TRAINING
 
 if __name__ == '__main__':
 
+    spectator_mode_set = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
     label_set = load_set(os.path.join(train_dir, 'labels_set.txt'))
     for i, lab in enumerate(label_set):
         if not lab:
@@ -99,7 +99,7 @@ if __name__ == '__main__':
             m.bias.data.fill_(0)
 
     num_classes = len(label_set) + 1
-    net = crnn.CRNN(image_height, num_channels, num_classes, num_hidden)
+    net = crnn.KillFeedCRNN(label_set, spectator_mode_set)
     net.apply(weights_init)
     print(net)
 
@@ -108,13 +108,16 @@ if __name__ == '__main__':
     criterion = CTCLoss()
 
     image = torch.FloatTensor(batch_size, 3, image_height, image_width)
+    spectator_modes = torch.IntTensor(batch_size)
     text = torch.IntTensor(batch_size * 5)
     length = torch.IntTensor(batch_size)
     if cuda and torch.cuda.is_available():
         net.cuda()
         image = image.cuda()
+        spectator_modes = spectator_modes.cuda()
         criterion = criterion.cuda()
     image = Variable(image)
+    spectator_modes = Variable(spectator_modes)
     text = Variable(text)
     length = Variable(length)
 
@@ -151,7 +154,7 @@ if __name__ == '__main__':
                 p.requires_grad = True
             net.train()
 
-            cost = train_batch(net, train_iter, device, criterion, optimizer,image, text, length, use_batched_dataset=use_batched_dataset)
+            cost = train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length, use_batched_dataset=use_batched_dataset)
             i += 1
             if cost is None:
                 continue
@@ -162,7 +165,7 @@ if __name__ == '__main__':
                       (epoch, num_epochs, i, len(train_loader), loss_avg.val()))
                 loss_avg.reset()
 
-        best_val_loss = val(net, val_loader, device, criterion, working_dir, best_val_loss, converter,image, text, length,
+        best_val_loss = val(net, val_loader, device, criterion, working_dir, best_val_loss, converter,image, spectator_modes,  text, length,
                                     use_batched_dataset=use_batched_dataset)
 
         # do checkpointing

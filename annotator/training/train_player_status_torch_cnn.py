@@ -51,6 +51,14 @@ torch.manual_seed(manualSeed)
 
 
 if __name__ == '__main__':
+    input_set_files = {
+        'color': os.path.join(train_dir, 'color_set.txt'),
+        'spectator_mode': os.path.join(train_dir, 'spectator_mode_set.txt'),
+         }
+    input_sets = {}
+    for k, v in input_set_files.items():
+        input_sets[k] = load_set(v)
+
     set_files = {  # 'player': os.path.join(train_dir, 'player_set.txt'),
         'hero': os.path.join(train_dir, 'hero_set.txt'),
         'alive': os.path.join(train_dir, 'alive_set.txt'),
@@ -58,10 +66,7 @@ if __name__ == '__main__':
         'status': os.path.join(train_dir, 'status_set.txt'),
         'antiheal': os.path.join(train_dir, 'antiheal_set.txt'),
         'immortal': os.path.join(train_dir, 'immortal_set.txt'),
-        'color': os.path.join(train_dir, 'color_set.txt'),
-        # 'spectator': os.path.join(train_dir, 'spectator_set.txt'),
     }
-
     sets = {}
     for k, v in set_files.items():
         sets[k] = load_set(v)
@@ -70,8 +75,8 @@ if __name__ == '__main__':
     print(device)
 
     if use_hdf5:
-        train_set = CNNHDF5Dataset(train_dir, sets=sets, batch_size=batch_size, pre='train', recent=True)
-        test_set = CNNHDF5Dataset(train_dir, sets=sets, batch_size=test_batch_size, pre='val', recent=True)
+        train_set = CNNHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=batch_size, pre='train') #, recent=True)
+        test_set = CNNHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=test_batch_size, pre='val') #, recent=True)
         weights = train_set.generate_class_weights(mu=10)
         print(len(train_set))
     else:
@@ -87,7 +92,7 @@ if __name__ == '__main__':
             test_set = CNNDataset(root=os.path.join(train_dir, 'val_set'), sets=sets)
         weights = train_set.generate_class_weights(mu=10, train_directory=train_dir)
 
-    net = StatusCNN(sets)
+    net = StatusCNN(sets, input_sets)
     net.to(device)
 
     print('WEIGHTS')

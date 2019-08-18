@@ -28,6 +28,7 @@ lstm_kf_train_dir = os.path.join(training_data_directory, 'kf_lstm')
 
 
 def generate_data(rounds):
+    from decimal import Decimal
     import time as timepackage
     generators = [MidStatusGenerator(), KillFeedCTCGenerator(debug=False), PlayerStatusGenerator(), PlayerOCRGenerator()]
     #for g in generators:
@@ -50,7 +51,7 @@ def generate_data(rounds):
                 process_round = True
         if not process_round:
             continue
-        time_step = min(x.time_step for x in generators if x.generate_data)
+        time_step = min(x.minimum_time_step for x in generators if x.generate_data)
         for beg, end in r['sequences']:
             print(beg, end)
             fvs = FileVideoStream(get_vod_path(r['stream_vod']), beg + r['begin'], end + r['begin'], time_step,
@@ -66,13 +67,14 @@ def generate_data(rounds):
                 for i, g in enumerate(generators):
                     begin = timepackage.time()
                     if time_step == g.time_step:
-                        g.process_frame(frame, time_point)
-                    elif frame_ind % (g.time_step / time_step) == 0:
-                        g.process_frame(frame, time_point)
+                        g.process_frame(frame, time_point, frame_ind)
+                    elif frame_ind % (g.minimum_time_step / time_step) == 0:
+                        g.process_frame(frame, time_point, frame_ind)
                     average_times[i] += (timepackage.time()-begin)/100
 
                 if frame_ind % 100 == 0:
                     print('Frame: {}/{}'.format(frame_ind, num_frames))
+                    print(g.process_index)
                     for i, g in enumerate(generators):
                         print('Average process frame time for {}:'.format(type(g).__name__), average_times[i])
                     average_times = [0 for _ in generators]

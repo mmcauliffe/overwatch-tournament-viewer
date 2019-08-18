@@ -5,6 +5,7 @@ import os
 import h5py
 import pickle
 import sys
+import cv2
 from collections import Counter
 import numpy as np
 
@@ -144,10 +145,13 @@ class BatchedCNNDataset(CNNDataset):
 
 
 class CNNHDF5Dataset(Dataset):
-    def __init__(self, train_dir, sets, batch_size, pre='train', recent=False):
+    def __init__(self, train_dir, sets, input_sets=None, batch_size=100, pre='train', recent=False):
         self.batch_size = batch_size
         self.pre = pre
         self.sets = sets
+        if input_sets is None:
+            input_sets = {}
+        self.input_sets = input_sets
         self.class_counts = {}
         for k, v in sets.items():
             self.class_counts[k] = len(v)
@@ -218,8 +222,18 @@ class CNNHDF5Dataset(Dataset):
         inputs = {}
         outputs = {}
         with h5py.File(path, 'r') as hf5:
-
+            #if hf5['{}_hero_label'.format(self.pre)][real_index] == 0:
+            #    for i in range(self.batch_size):
+            #        print('index', i)
+            #        for k,s in self.sets.items():
+            #            print(k, s[hf5['{}_{}_label'.format(self.pre, k)][real_index+i]])
+            #        print('round', path)
+            #        print('time_point', hf5['{}_time_point'.format(self.pre)][real_index+i])
+            #        cv2.imshow('frame_{}'.format(i), np.transpose(hf5['{}_img'.format(self.pre)][real_index+i, ...], (1, 2, 0)))
+            #    cv2.waitKey()
             inputs['image']= torch.from_numpy(hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]).float()
+            for k in self.input_sets.keys():
+                inputs[k]= torch.from_numpy(hf5['{}_{}_label'.format(self.pre, k)][real_index:real_index+self.batch_size, ...]).long()
 
             for k in self.sets.keys():
                 try:
@@ -234,6 +248,11 @@ class CNNHDF5Dataset(Dataset):
             with h5py.File(next_path, 'r') as hf5:
                 im = torch.from_numpy(hf5['{}_img'.format(self.pre)][0:from_next, ...]).float()
                 inputs['image'] = torch.cat((inputs['image'], im), 0)
+
+                for k in self.input_sets.keys():
+                    x = torch.from_numpy(hf5['{}_{}_label'.format(self.pre, k)][0:from_next, ...]).long()
+                    inputs[k] = torch.cat((inputs[k], x), 0)
+
                 for k in self.sets.keys():
                     try:
                         n = hf5['{}_{}_label'.format(self.pre, k)][0:from_next]

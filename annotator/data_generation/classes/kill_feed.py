@@ -6,7 +6,7 @@ import heapq
 import numpy as np
 
 from annotator.data_generation.classes.ctc import CTCDataGenerator
-from annotator.game_values import COLOR_SET, HERO_SET, LABEL_SET
+from annotator.game_values import COLOR_SET, HERO_SET, LABEL_SET, SPECTATOR_MODES
 from annotator.config import BOX_PARAMETERS, na_lab
 from annotator.api_requests import get_kf_events
 from annotator.utils import get_event_ranges
@@ -62,9 +62,12 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                     f.write('{}\n'.format(c))
 
     def figure_slot_params(self, r):
+        from datetime import datetime
         self.slot_params = {}
         params = BOX_PARAMETERS[r['stream_vod']['film_format']]['KILL_FEED_SLOT']
-        self.half_size_npcs = r['spectator_mode'] == 'Status'
+        broadcast_date = datetime.strptime(r['stream_vod']['broadcast_date'], '%Y-%m-%dT%H:%M:%SZ')
+        status_date_start = datetime(2019, 1, 1)
+        self.half_size_npcs = broadcast_date > status_date_start
         for s in self.slots:
             self.slot_params[s] = {}
             self.slot_params[s]['x'] = params['X']
@@ -123,7 +126,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             print(kf)
             cv2.waitKey()
 
-    def process_frame(self, frame, time_point):
+    def process_frame(self, frame, time_point, frame_ind):
         if not self.generate_data:
             return
         for rd in self.ranges:
@@ -178,6 +181,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                 self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
                 # self.train_mean += box / self.hdf5_file['train_img'].shape[0]
                 sequence_length = len(sequence)
+                self.hdf5_file['{}_spectator_mode_label'.format(pre)][index] = SPECTATOR_MODES.index(self.spec_mode)
                 if sequence:
                     self.hdf5_file["{}_label_sequence_length".format(pre)][index] = sequence_length
                     self.hdf5_file["{}_label_sequence".format(pre)][index, 0:len(sequence)] = sequence
@@ -204,6 +208,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             self.generate_data = False
             return
         self.get_data(r)
+        self.spec_mode = r['spectator_mode'].lower()
         self.ranges = get_event_ranges(self.states, r['end'] - r['begin'])
         num_frames = 0
         for rd in self.ranges:
@@ -235,6 +240,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                                           maxshape=(None, shape[1], shape[2], shape[3]))
             self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
             self.hdf5_file.create_dataset("{}_exist_label".format(pre), (count,), np.uint8, maxshape=(None,))
+            self.hdf5_file.create_dataset("{}_spectator_mode_label".format(pre), (count,), np.uint8, maxshape=(None,))
             self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
                                           np.int16, maxshape=(None, self.max_sequence_length),
                                           fillvalue=len(self.label_set))

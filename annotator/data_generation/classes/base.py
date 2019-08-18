@@ -43,6 +43,10 @@ class DataGenerator(object):
                         s.append(line.strip())
                 assert s == self.sets[k][len(s)]
 
+    @property
+    def minimum_time_step(self):
+        return self.time_step
+
     def display_current_frame(self, frame, time_point):
         for slot in self.slots:
             if isinstance(slot, (list, tuple)):
@@ -70,7 +74,7 @@ class DataGenerator(object):
     def figure_slot_params(self, r):
         pass
 
-    def process_frame(self, frame, time_point):
+    def process_frame(self, frame, time_point, frame_ind):
         if not self.generate_data:
             return
         for slot in self.slots:

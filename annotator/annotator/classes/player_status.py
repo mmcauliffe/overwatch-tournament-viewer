@@ -73,10 +73,12 @@ class PlayerState(object):
     def generate_switches(self):
         switches = []
         for hero_state in self.statuses['hero']:
+            print(self.player, hero_state)
             switches.append([hero_state['begin'], hero_state['status']])
         return switches
 
     def generate_status_effects(self, enemy_team, friendly_team):
+        import time
         status_effect_types = ['antiheal', 'asleep', 'frozen', 'hacked', 'stunned', 'immortal']
         statuses = {}
         print(self.statuses['status'])
@@ -105,6 +107,10 @@ class PlayerState(object):
                     continue
             if interval['status'] != 'normal' and self.alive_at_time(interval['begin']):
                 statuses[interval['status']].append(interval)
+        for k, v in statuses.items():
+            print(self.player, self.name,  k)
+            for interval in v:
+                print(time.strftime('%M:%S', time.gmtime(837+interval['begin'])), time.strftime('%M:%S', time.gmtime(837+interval['end'])))
         return statuses
 
     def generate_ults(self, mech_deaths=None, revive_events=None):
@@ -250,13 +256,14 @@ class PlayerStatusAnnotator(BaseAnnotator):
     identifier = 'player_status'
     box_settings = 'LEFT'
 
-    def __init__(self, film_format, model_directory, device, left_color, right_color, player_names):
+    def __init__(self, film_format, model_directory, device, left_color, right_color, player_names, spectator_mode='O'):
         super(PlayerStatusAnnotator, self).__init__(film_format, device)
         self.figure_slot_params(film_format)
         self.model_directory = model_directory
         self.left_team_color = left_color
         self.right_team_color = right_color
         self.player_names = player_names
+        self.spectator_mode = spectator_mode
         set_paths = {
             'hero': os.path.join(model_directory, 'hero_set.txt'),
             'alive': os.path.join(model_directory, 'alive_set.txt'),
@@ -267,11 +274,11 @@ class PlayerStatusAnnotator(BaseAnnotator):
             'color': os.path.join(model_directory, 'color_set.txt'),
 
         }
-
+        spectator_mode_set = load_set(os.path.join(model_directory, 'spectator_mode_set.txt'))
         sets = {}
         for k, v in set_paths.items():
             sets[k] = load_set(v)
-        self.model = StatusCNN(sets)
+        self.model = StatusCNN(sets, spectator_mode_set)
         self.model.load_state_dict(torch.load(os.path.join(model_directory, 'model.pth')))
         self.model.eval()
         for p in self.model.parameters():
@@ -284,6 +291,8 @@ class PlayerStatusAnnotator(BaseAnnotator):
         self.images = Variable(torch.FloatTensor(self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
                       int(self.params['WIDTH'] * self.resize_factor)).to(device))
 
+        self.spectator_modes = Variable(torch.LongTensor(self.batch_size).to(device))
+        self.spectator_modes[:] = spectator_mode_set.index(self.spectator_mode)
         for s in self.slot_params.keys():
             self.to_predict[s] = np.zeros(self.shape, dtype=np.uint8)
             self.statuses[s] = {k: [] for k in list(self.model.sets.keys())}
@@ -335,7 +344,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             #print(s)
             b = time.time()
             loadData(self.images, torch.from_numpy(self.to_predict[s]).float())
-            predicteds = self.model({'image': self.images})
+            predicteds = self.model({'image': self.images, 'spectator_mode': self.spectator_modes[:self.images.size(0)]})
             #print('got predictions:', time.time()-b)
             b = time.time()
             for k, v in predicteds.items():
@@ -362,48 +371,12 @@ class PlayerStatusAnnotator(BaseAnnotator):
             #print('created statuses:', time.time()-b)
         print('Status annotate took: ', time.time() - begin)
 
-    def generate_statuses(self):
-        statuses = {}
-        for s, status_dict in self.statuses.items():
-            print(s)
-            statuses[s] = {}
-            for k, v in status_dict.items():
-                print(k)
-                if k == 'color':
-                    new_v = defaultdict(float)
-                    begin =v[0]['begin']
-                    end = v[-1]['end']
-                    for i in v:
-                        new_v[i['status']] += i['end'] - i['begin']
-                    new_v = max(new_v.keys(), key=lambda x: new_v[x])
-                    statuses[s][k] = [{'begin': begin, 'end': end, 'status':new_v}]
-                else:
-                    if k in ['hero', 'alive']:
-                        threshold = 1
-                    elif k in ['ult']:
-                        threshold = 0.5
-                    else:
-                        threshold = 0.3
-                    v = [x for x in v if x['end'] - x['begin'] > threshold]
-                    new_v = []
-                    for x in v:
-                        if not new_v:
-                            new_v.append(x)
-                        else:
-                            if x['status'] == new_v[-1]['status']:
-                                new_v[-1]['end'] = x['end']
-                            else:
-                                new_v.append(x)
-                    statuses[s][k] = new_v
-        print(statuses)
-        return statuses
-
     def generate_teams(self):
         teams = {'left': {}, 'right': {}}
-        for k, status_dict in self.statuses.items():
-            side, ind = k
+        for slot, status_dict in self.statuses.items():
+            side, ind = slot
             new_statuses = {}
-            new_statuses['player_name'] = self.player_names[k]
+            new_statuses['player_name'] = self.player_names[slot]
             if side == 'left':
                 new_statuses['color'] = self.left_team_color
             else:
@@ -418,11 +391,31 @@ class PlayerStatusAnnotator(BaseAnnotator):
                         new_v[i['status']] += i['end'] - i['begin']
                     new_v = max(new_v.keys(), key=lambda x: new_v[x])
                     new_statuses[k] = [{'begin': begin, 'end': end, 'status':new_v}]
+                elif k == 'hero':
+                    new_v = []
+                    threshold = 5
+                    for i, x in enumerate(v):
+                        if not new_v:
+                            if i < len(v) - 1 and x['end'] - x['begin'] < v[i+1]['end'] - v[i+1]['begin'] and i == 0:
+                                continue
+                            else:
+                                new_v.append(x)
+                        else:
+                            if x['status'] == new_v[-1]['status']:
+                                new_v[-1]['end'] = x['end']
+                            elif x['end'] - x['begin'] > threshold and x['status'] != 'n/a':
+                                new_v.append(x)
+                    new_v[0]['begin'] = 0
+                    new_statuses[k] = new_v
                 else:
-                    if k in ['hero', 'alive']:
+                    if k == 'alive':
                         threshold = 1
-                    else:
+                    elif k == 'hero':
+                        threshold = 5
+                    elif k == 'ult':
                         threshold = 0.3
+                    else:
+                        threshold = 0.8
                     v = [x for x in v if x['end'] - x['begin'] > threshold]
                     new_v = []
                     for i,x in enumerate(v):
@@ -450,7 +443,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             new_statuses['revive_events'] = revive_events
             for k2, v2 in new_statuses.items():
                 print(k2, v2)
-            teams[side][ind] = PlayerState(k, new_statuses)
+            teams[side][ind] = PlayerState(slot, new_statuses)
         left_team = Team('left', teams['left'])
         left_team.color = self.left_team_color
         for p, v in left_team.player_states.items():

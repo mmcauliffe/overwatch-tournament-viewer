@@ -90,7 +90,7 @@ def annotate_game_or_not(v):
             frame, time_point = fvs.read()
         except Empty:
             break
-        game_annotator.process_frame(frame)
+        game_annotator.process_frame(frame, time_point)
     game_annotator.annotate()
     return game_annotator.status
 
@@ -148,13 +148,13 @@ def annotate_statuses(v, data):
 
 def annotate_properties(v, data):
     import time
-    round_level = ['round_number', 'attacking_color']
-    game_level = ['spectator_mode', 'map', 'map_mode']
+    round_level = ['map', 'round_number', 'attacking_side']
+    game_level = ['spectator_mode', 'map_mode']
     for r in data['rounds']:
         print('begin', time.strftime('%H:%M:%S', time.gmtime(r['begin'])))
         print('end', time.strftime('%H:%M:%S', time.gmtime(r['end'])))
         mid_annotator = MidAnnotator(v['film_format'], mid_model_dir, device)
-        fvs = FileVideoStream(get_vod_path(v), r['begin'], r['end'], mid_annotator.time_step, real_begin=r['begin']).start()
+        fvs = FileVideoStream(get_vod_path(v), r['begin'], r['end'], 10, real_begin=r['begin']).start()
         time.sleep(5)
         print('begin mid processing')
         while True:
@@ -162,7 +162,7 @@ def annotate_properties(v, data):
                 frame, time_point = fvs.read()
             except Empty:
                 break
-            mid_annotator.process_frame(frame)
+            mid_annotator.process_frame(frame, time_point)
         mid_annotator.annotate()
         statuses = mid_annotator.statuses
         ends = {}
@@ -199,8 +199,9 @@ def analyze_ingames(vods):
                 end_timestamp = time.strftime('%H:%M:%S', time.gmtime(g['end']))
                 print('GAME      ', '{}-{}: {}'.format(begin_timestamp, end_timestamp, g['status']))
                 data['rounds'].append({'begin': g['begin'], 'end': g['end']})
-
+        #annotate_properties(v, data)
         print(data)
+        #error
         #annotate_names(v, data)
         #annotate_statuses(v, data)
         print(upload_annotated_in_out_game(data))

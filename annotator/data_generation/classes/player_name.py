@@ -41,7 +41,7 @@ class PlayerOCRGenerator(CTCDataGenerator):
         d = look_up_player_state(slot[0], slot[1], time_point, self.states)
         return [self.label_set.index(x) for x in self.names[slot]], d['alive'], self.colors[slot]
 
-    def process_frame(self, frame, time_point):
+    def process_frame(self, frame, time_point, frame_ind):
         if not self.generate_data:
             return
         #cv2.imshow('frame', frame)

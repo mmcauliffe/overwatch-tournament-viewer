@@ -86,13 +86,15 @@ class KillFeedAnnotator(BaseAnnotator):
     identifier = 'kill_feed'
     box_settings = 'KILL_FEED_SLOT'
 
-    def __init__(self, film_format, model_directory, exists_model_directory, device, half_size_npcs=True):
+    def __init__(self, film_format, model_directory, exists_model_directory, device, half_size_npcs=True, spectator_mode='O'):
         super(KillFeedAnnotator, self).__init__(film_format, device)
         self.slots = range(6)
         self.figure_slot_params(film_format)
         self.half_size_npcs = half_size_npcs
+        self.spectator_mode = spectator_mode
         self.model_directory = model_directory
         label_set = load_set(os.path.join(model_directory, 'labels_set.txt'))
+        spectator_mode_set = load_set(os.path.join(model_directory, 'spectator_mode_set.txt'))
         set_paths = {
             'exist': os.path.join(exists_model_directory, 'exist_label_set.txt'),
         }
@@ -107,7 +109,7 @@ class KillFeedAnnotator(BaseAnnotator):
             p.requires_grad = False
         self.exists_model.to(device)
 
-        self.model = KillFeedCRNN(label_set)
+        self.model = KillFeedCRNN(label_set, spectator_mode_set)
         self.model.load_state_dict(torch.load(os.path.join(model_directory, 'model.pth')))
         self.model.eval()
         for p in self.model.parameters():
@@ -119,6 +121,7 @@ class KillFeedAnnotator(BaseAnnotator):
                       int(self.params['WIDTH'] * self.resize_factor))
         self.images = Variable(torch.FloatTensor(self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
                       int(self.params['WIDTH'] * self.resize_factor)).to(device))
+        self.spectator_modes = Variable(torch.LongTensor(self.batch_size).to(device))
         for s in self.slot_params.keys():
             self.to_predict[s] = np.zeros(self.shape, dtype=np.uint8)
 
@@ -137,6 +140,7 @@ class KillFeedAnnotator(BaseAnnotator):
         cur_kf = {}
         images = None
         show = False
+        spectator_modes = []
         for s, params in self.slot_params.items():
 
             x = params['x']
@@ -162,6 +166,7 @@ class KillFeedAnnotator(BaseAnnotator):
                 images = image
             else:
                 images = torch.cat((images, image), 0)
+            spectator_modes.append(self.model.spectator_mode_set.index(self.spectator_mode))
             if label == 'half_sized':
                 #show = True
                 shift += int(self.params['HEIGHT']/2)
@@ -170,11 +175,14 @@ class KillFeedAnnotator(BaseAnnotator):
         if images is None:
             return
         #b = time.time()
+        spectator_modes = torch.LongTensor(spectator_modes).to(self.device)
         loadData(self.images, images)
+        loadData(self.spectator_modes, spectator_modes)
+
         batch_size = self.images.size(0)
         #print('load kf ctc image', time.time()-b, batch_size)
         #b = time.time()
-        preds = self.model(self.images)
+        preds = self.model(self.images, self.spectator_modes)
         #print('kf ctc predict', time.time()-b)
         #b = time.time()
         pred_size = preds.size(0)

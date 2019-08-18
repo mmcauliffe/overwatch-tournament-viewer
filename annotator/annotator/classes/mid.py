@@ -18,7 +18,7 @@ class MidAnnotator(BaseAnnotator):
         set_paths = {
             'overtime': os.path.join(model_directory, 'overtime_set.txt'),
             'point_status': os.path.join(model_directory, 'point_status_set.txt'),
-            'attacking_color': os.path.join(model_directory, 'attacking_color_set.txt'),
+            'attacking_side': os.path.join(model_directory, 'attacking_side_set.txt'),
             'map': os.path.join(model_directory, 'map_set.txt'),
             'map_mode': os.path.join(model_directory, 'map_mode_set.txt'),
             'round_number': os.path.join(model_directory, 'round_number_set.txt'),
@@ -72,7 +72,7 @@ class MidAnnotator(BaseAnnotator):
                     actual_points[-1]['end'] = r['begin']
                 actual_points.append(r)
 
-        for k in ['attacking_color', 'map', 'map_mode', 'round_number']:
+        for k in ['attacking_side', 'map', 'map_mode', 'round_number']:
             counts = defaultdict(float)
             for r in self.statuses[k]:
                 counts[r['status']] += r['end'] - r['begin']

@@ -43,6 +43,7 @@ class PlayerStatusGenerator(DataGenerator):
                 self.slots.append((s, i))
         self.slot_params = {}
         self.check_set_info()
+        self.has_status = False
 
     def figure_slot_params(self, r):
         left_params = BOX_PARAMETERS[r['stream_vod']['film_format']]['LEFT']
@@ -95,13 +96,23 @@ class PlayerStatusGenerator(DataGenerator):
                 return True
         return False
 
-    def process_frame(self, frame, time_point):
+    @property
+    def minimum_time_step(self):
+        if self.has_status:
+            return self.time_step
+        else:
+            return self.secondary_time_step
+
+    def process_frame(self, frame, time_point, frame_ind):
         if not self.generate_data:
             return
         for slot in self.slots:
-            is_status = self.check_status(slot, time_point)
+            if self.has_status:
+                is_status = self.check_status(slot, time_point)
+            else:
+                is_status = False
             if not is_status:
-                if time_point % self.secondary_time_step != 0:
+                if frame_ind % (self.secondary_time_step/self.minimum_time_step) != 0:
                     continue
             d = self.lookup_data(slot, time_point)
             params = self.slot_params[slot]
@@ -127,11 +138,11 @@ class PlayerStatusGenerator(DataGenerator):
                       x + x_offset: x + self.image_width + x_offset]
                 if self.resize_factor != 1:
                     box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
-                #if is_status:
-                #    cv2.imshow('frame_{}'.format(slot), box)
-                #    print(time_point)
-                #    print(d)
-                #    cv2.waitKey()
+                if False:
+                    cv2.imshow('frame_{}'.format(slot), box)
+                    print(time_point)
+                    print(d)
+                    cv2.waitKey()
                 box = np.transpose(box, axes=(2, 0, 1))
                 self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
                 self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
@@ -160,13 +171,20 @@ class PlayerStatusGenerator(DataGenerator):
         expected_duration = 0
         for beg, end in r['sequences']:
             expected_duration += end - beg
+        self.has_status = False
         for slot in self.slots:
+            print(slot)
             status_duration = round(sum([x['end'] - x['begin'] for x in self.status_state[slot]]), 1)
+
             normal_duration = expected_duration - status_duration
             normal_frame_count = int(normal_duration / self.secondary_time_step)
             status_frame_count = int(status_duration / self.time_step)
             num_frames += normal_frame_count + status_frame_count
-            print(status_duration, status_frame_count)
+            print('NORMAL', normal_duration, normal_frame_count)
+            print('STATUS', status_duration, status_frame_count)
+            if not self.has_status:
+                self.has_status = status_duration > 0
+        print('TOTAL FRAMES', num_frames)
         num_frames *= self.num_variations
         self.num_train = int(num_frames * 0.8)
         self.num_val = num_frames - self.num_train
@@ -202,7 +220,7 @@ class PlayerStatusGenerator(DataGenerator):
         self.spec_mode = r['spectator_mode'].lower()
 
     def lookup_data(self, slot, time_point):
-        d = look_up_player_state(slot[0], slot[1], time_point, self.states)
+        d = look_up_player_state(slot[0], slot[1], time_point, self.states, self.has_status)
         d['spectator_mode'] = self.spec_mode
         if slot[0] == 'left':
             d['color'] = self.left_color

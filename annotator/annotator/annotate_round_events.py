@@ -25,6 +25,10 @@ annotation_dir = r'E:\Data\Overwatch\annotations'
 oi_annotation_dir = r'E:\Data\Overwatch\oi_annotations'
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #device = torch.device("cpu")
+spec_modes = {'O': 'Original',
+        'W':"world cup",
+        "L":"overwatch league",
+              'C': 'Contenders'}
 
 def predict_on_video(v, r, sequences):
     import time
@@ -39,9 +43,10 @@ def predict_on_video(v, r, sequences):
         player_names[('right', p['player_index'])] = player_mapping[p['player']]
     left_color = r['game']['left_team']['color'].lower()
     right_color = r['game']['right_team']['color'].lower()
-    status_annotator = PlayerStatusAnnotator(v['film_format'], player_model_dir, device, left_color, right_color, player_names)
+    spec = spec_modes[r['game']['match']['event']['spectator_mode']].lower()
+    status_annotator = PlayerStatusAnnotator(v['film_format'], player_model_dir, device, left_color, right_color, player_names, spectator_mode=spec)
     #name_annotator = PlayerNameAnnotator(v['film_format'], player_ocr_model_dir, device)
-    kill_feed_annotator = KillFeedAnnotator(v['film_format'], kf_ctc_model_dir, kf_exists_model_dir, device)
+    kill_feed_annotator = KillFeedAnnotator(v['film_format'], kf_ctc_model_dir, kf_exists_model_dir, device, spectator_mode=spec)
     mid_annotator = MidAnnotator(v['film_format'], mid_model_dir, device)
     for s in sequences:
         print(s)
@@ -64,7 +69,7 @@ def predict_on_video(v, r, sequences):
         mid_annotator.annotate()
     mid_statuses = mid_annotator.generate_round_properties()
     #print(name_annotator.names)
-    statuses = status_annotator.generate_statuses()
+    #statuses = status_annotator.generate_statuses()
     left_team, right_team = status_annotator.generate_teams()
     kill_feed_events = kill_feed_annotator.generate_kill_events(left_team, right_team)
     print(kill_feed_events)
@@ -158,6 +163,7 @@ def analyze_rounds(vods):
             data['round'] = r['id']
             print('DATA')
             print(data)
+            error
             print(upload_annotated_round_events(data))
             error
 

@@ -99,7 +99,7 @@ def get_local_path(r):
         return match_path
 
 
-def look_up_player_state(side, index, time, states):
+def look_up_player_state(side, index, time, states, has_status=True):
     states = states[side][str(index)]
 
     data = {}
@@ -113,17 +113,21 @@ def look_up_player_state(side, index, time, states):
         ind -= 1
     data['alive'] = states['alive'][ind]['status']
     data['status'] = 'normal'
-    for s in STATUS_SET:
-        if not s:
-            continue
-        ind = np.searchsorted(states[s+'_array'], time, side="right")
-        if ind == len(states[s]):
-            ind -= 1
-        if s in ['asleep', 'frozen', 'hacked', 'stunned']:
-            if not states[s][ind]['status'].startswith('not_'):
-                data['status'] = s
-        else:
-            data[s] = states[s][ind]['status']
+    if has_status:
+        for s in STATUS_SET:
+            if not s:
+                continue
+            ind = np.searchsorted(states[s+'_array'], time, side="right")
+            if ind == len(states[s]):
+                ind -= 1
+            if s in ['asleep', 'frozen', 'hacked', 'stunned']:
+                if not states[s][ind]['status'].startswith('not_'):
+                    data['status'] = s
+            else:
+                data[s] = states[s][ind]['status']
+    else:
+        for x in ['antiheal', 'immortal']:
+            data[x] = 'not_' + x
 
     ind = np.searchsorted(states['hero_array'], time, side="right")
     if ind == len(states['hero']):

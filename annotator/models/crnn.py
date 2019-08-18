@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch
 from annotator.datasets.ctc_dataset import LabelConverter
 
 
@@ -98,7 +99,30 @@ class PlayerNameCRNN(CRNN):
 class KillFeedCRNN(CRNN):
     num_hidden = 256
 
-    def __init__(self, label_set):
+    def __init__(self, label_set, spectator_mode_set):
         self.label_set = label_set
         self.converter = LabelConverter(label_set)
+        self.spectator_mode_set = spectator_mode_set
         super(KillFeedCRNN, self).__init__(32, 3, len(label_set) + 1, self.num_hidden)
+        self.spectator_mode_embedding = nn.Embedding(len(spectator_mode_set), len(spectator_mode_set))
+        self.rnn = nn.Sequential(
+            BidirectionalLSTM(512 + len(spectator_mode_set), self.num_hidden, self.num_hidden),
+            BidirectionalLSTM(self.num_hidden, self.num_hidden, len(label_set) + 1))
+
+    def forward(self, image, spectator_mode):
+        # conv features
+        conv = self.cnn(image)
+        b, c, h, w = conv.size()
+        assert h == 1, "the height of conv must be 1"
+        conv = conv.squeeze(2)
+        conv = conv.permute(2, 0, 1)  # [w, b, c]
+
+        spec = self.spectator_mode_embedding(spectator_mode.to(torch.int64))
+        spec.unsqueeze_(0)
+        spec = spec.expand(conv.size(0), spec.size(1), spec.size(2))
+
+        combined = torch.cat((conv, spec), 2)
+        # rnn features
+        output = self.rnn(combined)
+
+        return output
