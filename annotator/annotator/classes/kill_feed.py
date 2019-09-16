@@ -13,43 +13,15 @@ from collections import defaultdict, Counter
 from annotator.config import sides, BOX_PARAMETERS
 from annotator.models.crnn import KillFeedCRNN
 from annotator.models.cnn import KillFeedCNN
-from annotator.game_values import HERO_SET, COLOR_SET, ABILITY_SET
+from annotator.game_values import HERO_SET, COLOR_SET, ABILITY_SET, KILL_FEED_INFO
 
+print(KILL_FEED_INFO)
+error
 
-ability_mapping = {'ana': ['biotic grenade', 'sleep dart', ],
-                   'ashe': ['b.o.b.', 'coach gun', 'dynamite'],
-                   'brigitte': ['whip shot', 'shield bash'],
-                   'baptiste': [],
-                   'bastion': ['configuration: tank', ],
-                   'd.va': ['boosters', 'call mech', 'micro missiles', 'self-destruct', ],
-                   'doomfist': ['meteor strike', 'rising uppercut', 'rocket punch', 'seismic slam', ],
-                   'genji': ['deflect', 'dragonblade', 'swift strike', ],
-                   'hanzo': ['dragonstrike', 'scatter arrow', 'sonic arrow', 'storm arrow'],
-                   'junkrat': ['concussion mine', 'rip-tire', 'steel trap', 'total mayhem', ],
-                   'lúcio': ['soundwave', ],
-                   'mccree': ['deadeye', 'flashbang', ],
-                   'mei': ['blizzard', ],
-                   'mercy': ['resurrect', ],
-                   'moira': ['biotic orb', 'coalescence', ],
-                   'orisa': ['halt!', ],
-                   'pharah': ['barrage', 'concussion blast', ],
-                   'reaper': ['death blossom', ],
-                   'reinhardt': ['charge', 'earthshatter', 'fire strike', ],
-                   'roadhog': ['chain hook', 'whole hog', ],
-                   'sigma': ['accretion', 'gravitic flux'],
-                   'soldier: 76': ['helix rockets', 'tactical visor', ],
-                   'sombra': [],
-                   'symmetra': ['sentry turret', ],
-                   'torbjörn': ['forge hammer', 'turret', ],
-                   'tracer': ['pulse bomb', ],
-                   'widowmaker': ['venom mine', ],
-                   'winston': ['jump pack', 'primal rage', ],
-                   'wrecking ball': ['piledriver', 'grappling claw', 'minefield'],
-                   'zarya': ['graviton surge', ],
-                   'zenyatta': []}
-npc_set = ['mech', 'rip-tire', 'shield generator', 'supercharger', 'teleporter', 'turret', 'immortality field']
-npc_mapping = {'mech': 'd.va', 'rip-tire': 'junkrat', 'shield generator': 'symmetra', 'supercharger': 'orisa',
-               'teleporter': 'symmetra', 'turret': 'torbjörn', 'immortality field': 'baptiste'}
+ability_mapping = KILL_FEED_INFO['ability_mapping']
+npc_set = KILL_FEED_INFO['npc_set']
+deniable_ults = KILL_FEED_INFO['deniable_ults']
+npc_mapping = KILL_FEED_INFO['npc_mapping']
 
 
 def close_events(e_one, e_two):
@@ -80,6 +52,18 @@ def merged_event(e_one, e_two):
         return e_one['event']
     return e_two['event']
 
+
+def convert_colors(color, left_color, right_color):
+    if 'white' in [left_color, right_color]:
+        if color != 'white':
+            if left_color != 'white':
+                return left_color
+            else:
+                return right_color
+        else:
+            return color
+    else:
+        return color
 
 class KillFeedAnnotator(BaseAnnotator):
     time_step = 0.1
@@ -195,6 +179,7 @@ class KillFeedAnnotator(BaseAnnotator):
             end_ind = (s + 1) * pred_size
             d = [self.model.label_set[x - 1] for x in preds[start_ind:end_ind] if x != 0]
             #print(d)
+            #print(s, d)
             cur_kf[s] = self.convert_kf_ctc_output(d)
         if cur_kf and show:
             print(cur_kf)
@@ -282,6 +267,7 @@ class KillFeedAnnotator(BaseAnnotator):
                 #if 280 <= k['time_point'] <= 281:
                 #    print(e)
                 if e['first_hero'] != 'n/a':
+                    e['first_color'] = convert_colors(e['first_color'], left_color, right_color)
                     if e['first_color'] not in [left_color, right_color]:
                         continue
                     if e['first_color'] == left_color:
@@ -290,7 +276,7 @@ class KillFeedAnnotator(BaseAnnotator):
                         killing_team = right_team
                     if not killing_team.has_hero_at_time(e['first_hero'], k['time_point']):
                         continue
-                    if e['ability'] != 'primary':
+                    if e['ability'] not in ['primary', 'melee']:
                         if e['ability'] not in ability_mapping[e['first_hero']]:
                             if e['first_hero'] != 'genji':
                                 continue
@@ -324,6 +310,7 @@ class KillFeedAnnotator(BaseAnnotator):
                 else:
                     possible_events.append({'time_point': k['time_point'], 'duration': 0, 'event': e})
         print('POSSIBLE EVENTS', possible_events)
+
         better_possible_events = []
         for i, p in enumerate(possible_events):
             for j, p2 in enumerate(better_possible_events):
@@ -356,9 +343,9 @@ class KillFeedAnnotator(BaseAnnotator):
             #print(time.strftime('%M:%S', time.gmtime(de['time_point'])), de)
             best_distance = 100
             best_event = None
-            print(de)
+            #print(de)
             for e in better_possible_events:
-                print(e)
+                #print(e)
                 if e['event']['second_hero'] != de['hero']:
                     continue
                 if e['event']['second_color'] != de['color']:
@@ -369,7 +356,7 @@ class KillFeedAnnotator(BaseAnnotator):
                 if dist < best_distance:
                     best_event = deepcopy(e)
                     best_distance = dist
-                print(best_event, best_distance)
+                #print(best_event, best_distance)
             #print(best_event)
             if best_event is None or best_distance > 7:
                 if de['hero'] is not None:
@@ -389,10 +376,9 @@ class KillFeedAnnotator(BaseAnnotator):
                 continue
             actual_events.append(best_event)
             integrity_check.add(integ)
-            print(actual_events)
         npc_events = []
         for e in better_possible_events:
-            if e['event']['second_hero'] in npc_set:
+            if e['event']['second_hero'] in npc_set + deniable_ults:
                 for ne in npc_events:
                     if close_events(ne['event'], e['event']):
                         if e['time_point'] + e['duration'] < ne['time_point'] + 7.3 and ne['duration'] < 7.5:
@@ -406,6 +392,7 @@ class KillFeedAnnotator(BaseAnnotator):
                     integrity_check.add(integ)
         npc_events = [x for x in npc_events if x['duration'] > 3]
         print('NPC DEATHS')
+        print(npc_events)
         self.mech_deaths = []
         for e in npc_events:
             actual_events.append(e)

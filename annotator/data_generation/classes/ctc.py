@@ -35,7 +35,7 @@ class CTCDataGenerator(DataGenerator):
                 for line in f:
                     s.append(line.strip())
             print(s, self.label_set)
-            assert s == self.label_set
+            #assert s == self.label_set
 
     def save_label_set(self):
         path = os.path.join(self.training_directory, 'labels_set.txt')

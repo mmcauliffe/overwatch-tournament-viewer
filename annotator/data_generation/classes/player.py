@@ -7,7 +7,7 @@ import numpy as np
 from annotator.data_generation.classes.base import DataGenerator
 from annotator.config import na_lab, sides, BOX_PARAMETERS
 from annotator.utils import look_up_player_state
-from annotator.api_requests import get_player_states
+from annotator.api_requests import get_player_states, get_round_states
 from annotator.game_values import HERO_SET, COLOR_SET, STATUS_SET, SPECTATOR_MODES
 
 
@@ -26,9 +26,12 @@ class PlayerStatusGenerator(DataGenerator):
                      'side': [na_lab] + sides,
                      'color': [na_lab] + COLOR_SET,
                      'spectator_mode': SPECTATOR_MODES,
+                     'switch': [na_lab, 'switch', 'not_switch'],
                      'status': ['normal', 'asleep', 'frozen', 'hacked', 'stunned']
                      }
         for s in STATUS_SET:
+            if s == 'status':
+                continue
             if s in self.sets['status']:
                 continue
             if not s:
@@ -46,9 +49,11 @@ class PlayerStatusGenerator(DataGenerator):
         self.has_status = False
 
     def figure_slot_params(self, r):
-        left_params = BOX_PARAMETERS[r['stream_vod']['film_format']]['LEFT']
-        right_params = BOX_PARAMETERS[r['stream_vod']['film_format']]['RIGHT']
+        film_format = r['game']['match']['event']['film_format']
+        left_params = BOX_PARAMETERS[film_format]['LEFT']
+        right_params = BOX_PARAMETERS[film_format]['RIGHT']
         self.slot_params = {}
+
         for side in sides:
             if side == 'left':
                 p = left_params
@@ -58,10 +63,40 @@ class PlayerStatusGenerator(DataGenerator):
                 self.slot_params[(side, i)] = {}
                 self.slot_params[(side, i)]['x'] = p['X'] + (p['WIDTH'] + p['MARGIN']) * i
                 self.slot_params[(side, i)]['y'] = p['Y']
+        if 'ZOOMED_LEFT' in BOX_PARAMETERS[film_format]:
+            self.zoomed_width = BOX_PARAMETERS[film_format]['ZOOMED_LEFT']['WIDTH']
+            self.zoomed_height = BOX_PARAMETERS[film_format]['ZOOMED_LEFT']['HEIGHT']
+            zoomed_left = BOX_PARAMETERS[film_format]['ZOOMED_LEFT']
+            zoomed_right = BOX_PARAMETERS[film_format]['ZOOMED_RIGHT']
+            self.zoomed_params = {}
+            for side in sides:
+                if side == 'left':
+                    p = zoomed_left
+                else:
+                    p = zoomed_right
+                for i in range(6):
+                    self.zoomed_params[(side, i)] = {}
+                    self.zoomed_params[(side, i)]['x'] = p['X'] + (p['WIDTH'] + p['MARGIN']) * i
+                    self.zoomed_params[(side, i)]['y'] = p['Y']
+        else:
+            self.zoomed_params = self.slot_params
+
+    def is_zoomed(self, time_point, side):
+        for z in self.zooms[side]:
+            if z['begin'] + 0.3 <= time_point < z['end'] - 0.3:
+                return True
+        return False
 
     def get_data(self, r):
         self.status_state = {}
         self.states = get_player_states(r['id'])
+        round_states = get_round_states(r['id'])
+        self.zooms = {'left': [], 'right': []}
+        zooms = round_states['zoomed_bars']
+        for side in self.zooms.keys():
+            for z in zooms[side]:
+                if z['status'] == 'zoomed':
+                    self.zooms[side].append(z)
         for slot in self.slots:
             print(slot)
             self.status_state[slot] = []
@@ -103,6 +138,29 @@ class PlayerStatusGenerator(DataGenerator):
         else:
             return self.secondary_time_step
 
+    def display_current_frame(self, frame, time_point):
+        for slot in self.slots:
+            side = slot[0]
+            zoomed = self.is_zoomed(time_point, side)
+            if isinstance(slot, (list, tuple)):
+                slot_name = '_'.join(map(str, slot))
+            else:
+                slot_name = slot
+            if zoomed:
+                params = self.zoomed_params[slot]
+            else:
+                params = self.slot_params[slot]
+            x = params['x']
+            y = params['y']
+            if zoomed:
+                box = frame[y: y + self.zoomed_height,
+                      x: x + self.zoomed_width]
+                box = cv2.resize(box, (64, 64))
+            else:
+                box = frame[y: y + self.image_height,
+                      x: x + self.image_width]
+            cv2.imshow('{}_{}'.format(self.identifier, slot_name), box)
+
     def process_frame(self, frame, time_point, frame_ind):
         if not self.generate_data:
             return
@@ -114,8 +172,15 @@ class PlayerStatusGenerator(DataGenerator):
             if not is_status:
                 if frame_ind % (self.secondary_time_step/self.minimum_time_step) != 0:
                     continue
+            side = slot[0]
+            zoomed = self.is_zoomed(time_point, side)
+            #if not zoomed: # FIXME
+            #   return
             d = self.lookup_data(slot, time_point)
-            params = self.slot_params[slot]
+            if zoomed:
+                params = self.zoomed_params[slot]
+            else:
+                params = self.slot_params[slot]
             x = params['x']
             y = params['y']
             variation_set = []
@@ -134,10 +199,13 @@ class PlayerStatusGenerator(DataGenerator):
                 else:
                     pre = 'val'
                     index -= self.num_train
-                box = frame[y + y_offset: y + self.image_height + y_offset,
-                      x + x_offset: x + self.image_width + x_offset]
-                if self.resize_factor != 1:
-                    box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
+                if zoomed:
+                    box = frame[y + y_offset: y + self.zoomed_height + y_offset,
+                          x + x_offset: x + self.zoomed_width + x_offset]
+                    box = cv2.resize(box, (self.image_height, self.image_width))
+                else:
+                    box = frame[y + y_offset: y + self.image_height + y_offset,
+                          x + x_offset: x + self.image_width + x_offset]
                 if False:
                     cv2.imshow('frame_{}'.format(slot), box)
                     print(time_point)

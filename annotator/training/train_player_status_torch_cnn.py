@@ -16,9 +16,6 @@ from annotator.models.cnn import StatusCNN
 from annotator.training.cnn_helper import train_batch, val
 from annotator.training.helper import Averager, load_set
 
-working_dir = r'E:\Data\Overwatch\models\player_status'
-os.makedirs(working_dir, exist_ok=True)
-log_dir = os.path.join(working_dir, 'log')
 TEST = True
 train_dir = r'E:\Data\Overwatch\training_data\player_status'
 
@@ -44,11 +41,18 @@ manualSeed = 1234 # reproduce experiemnt
 random_sample = True
 use_batched_dataset = True
 use_hdf5 = True
+recent = False # Only use recent rounds
 
 random.seed(manualSeed)
 np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
+working_dir = r'E:\Data\Overwatch\models\player_status'
+if recent:
+    working_dir += '_recent'
+os.makedirs(working_dir, exist_ok=True)
+log_dir = os.path.join(working_dir, 'log')
+model_path = os.path.join(working_dir, 'model.pth')
 
 if __name__ == '__main__':
     input_set_files = {
@@ -63,6 +67,7 @@ if __name__ == '__main__':
         'hero': os.path.join(train_dir, 'hero_set.txt'),
         'alive': os.path.join(train_dir, 'alive_set.txt'),
         'ult': os.path.join(train_dir, 'ult_set.txt'),
+        'switch': os.path.join(train_dir, 'switch_set.txt'),
         'status': os.path.join(train_dir, 'status_set.txt'),
         'antiheal': os.path.join(train_dir, 'antiheal_set.txt'),
         'immortal': os.path.join(train_dir, 'immortal_set.txt'),
@@ -75,8 +80,8 @@ if __name__ == '__main__':
     print(device)
 
     if use_hdf5:
-        train_set = CNNHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=batch_size, pre='train') #, recent=True)
-        test_set = CNNHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=test_batch_size, pre='val') #, recent=True)
+        train_set = CNNHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=batch_size, pre='train', recent=recent)
+        test_set = CNNHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=test_batch_size, pre='val', recent=recent)
         weights = train_set.generate_class_weights(mu=10)
         print(len(train_set))
     else:
@@ -94,6 +99,11 @@ if __name__ == '__main__':
 
     net = StatusCNN(sets, input_sets)
     net.to(device)
+
+    if os.path.exists(model_path): # Initialize from CNN model
+        d = torch.load(model_path)
+        print(d)
+        net.load_state_dict(d, strict=False)
 
     print('WEIGHTS')
     for k, v in weights.items():

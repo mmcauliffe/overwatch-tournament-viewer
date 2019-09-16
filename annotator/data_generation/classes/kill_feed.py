@@ -64,7 +64,8 @@ class KillFeedCTCGenerator(CTCDataGenerator):
     def figure_slot_params(self, r):
         from datetime import datetime
         self.slot_params = {}
-        params = BOX_PARAMETERS[r['stream_vod']['film_format']]['KILL_FEED_SLOT']
+        film_format = r['game']['match']['event']['film_format']
+        params = BOX_PARAMETERS[film_format]['KILL_FEED_SLOT']
         broadcast_date = datetime.strptime(r['stream_vod']['broadcast_date'], '%Y-%m-%dT%H:%M:%SZ')
         status_date_start = datetime(2019, 1, 1)
         self.half_size_npcs = broadcast_date > status_date_start
@@ -86,7 +87,8 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             if d['assisting_heroes']:
                 for h in d['assisting_heroes']:
                     raw_sequence.append(h.lower() + '_assist')
-
+        if d['ability'] == 'n/a':
+            d['ability'] = 'primary'
         raw_sequence.append(d['ability'])
         second = d['second_hero']
         if second not in HERO_SET and second+'_npc' in LABEL_SET:

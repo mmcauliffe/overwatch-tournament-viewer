@@ -1,15 +1,15 @@
 import os
 import torch
 from annotator.annotator.classes.base import BaseAnnotator
-from annotator.models.cnn import MidCNN
+from annotator.models.cnn import GameCNN
 from annotator.training.helper import load_set
 
 
 class InGameAnnotator(BaseAnnotator):
     time_step = 1
-    resize_factor = 0.5
+    resize_factor = 0.2
     identifier = 'game'
-    box_settings = 'MID'
+    box_settings = 'WINDOW'
 
     def __init__(self, film_format, model_directory, device):
         super(InGameAnnotator, self).__init__(film_format, device)
@@ -18,7 +18,7 @@ class InGameAnnotator(BaseAnnotator):
         sets = {}
         for k, v in set_paths.items():
             sets[k] = load_set(v)
-        self.model = MidCNN(sets)
+        self.model = GameCNN(sets)
         self.model.load_state_dict(torch.load(os.path.join(model_directory, 'model.pth')))
         self.model.eval()
         self.model.to(device)

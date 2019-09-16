@@ -86,8 +86,20 @@ REPLAY_WIDTH = 208
 PAUSE_HEIGHT = 48
 PAUSE_WIDTH = 144
 
+SMALLER_WINDOW_WIDTH = 128
+SMALLER_WINDOW_HEIGHT = 128
+
+FRAME_HEIGHT = 720
+FRAME_WIDTH = 1280
+
 BOX_PARAMETERS = {
     'O': {
+        'WINDOW': {
+            'X': 0,
+            'Y': 0,
+            'HEIGHT': FRAME_HEIGHT,
+            'WIDTH': FRAME_WIDTH,
+        },
         'MID': {
             'X': 496,
             'Y': 37,
@@ -143,6 +155,12 @@ BOX_PARAMETERS = {
 }
 
 BOX_PARAMETERS['K'] = {
+        'WINDOW': {
+            'X': 0,
+            'Y': 0,
+            'HEIGHT': FRAME_HEIGHT,
+            'WIDTH': FRAME_WIDTH,
+        },
     'MID': {
         'X': 496,
         'Y': 45,
@@ -197,6 +215,12 @@ BOX_PARAMETERS['K'] = {
 }
 
 BOX_PARAMETERS['W'] = {
+        'WINDOW': {
+            'X': 0,
+            'Y': 0,
+            'HEIGHT': FRAME_HEIGHT,
+            'WIDTH': FRAME_WIDTH,
+        },
     'MID': {
         'X': 496,
         'Y': 36,
@@ -251,6 +275,12 @@ BOX_PARAMETERS['W'] = {
 }
 
 BOX_PARAMETERS['2'] = {
+        'WINDOW': {
+            'X': 0,
+            'Y': 0,
+            'HEIGHT': FRAME_HEIGHT,
+            'WIDTH': FRAME_WIDTH,
+        },
     'MID': {
         'X': 496,
         'Y': 62,
@@ -290,6 +320,20 @@ BOX_PARAMETERS['2'] = {
         'HEIGHT': 64,
         'MARGIN': 7,
     },
+    'ZOOMED_LEFT': {
+        'X': 36,
+        'Y': 72,
+        'WIDTH': 80,
+        'HEIGHT': 80,
+        'MARGIN': 7,
+    },
+    'ZOOMED_RIGHT': {
+        'X': 738,
+        'Y': 72,
+        'WIDTH': 80,
+        'HEIGHT': 80,
+        'MARGIN': 7,
+    },
     'REPLAY': {
         'X': 145,
         'Y': 150,
@@ -301,10 +345,22 @@ BOX_PARAMETERS['2'] = {
         'Y': 300,
         'WIDTH': PAUSE_WIDTH,
         'HEIGHT': PAUSE_HEIGHT,
+    },
+    'SMALLER_WINDOW':{
+        'X': 1280 -128 - 10,
+        'Y': 128 - 10,
+        'WIDTH': SMALLER_WINDOW_WIDTH,
+        'HEIGHT': SMALLER_WINDOW_HEIGHT,
     }
 }
 
 BOX_PARAMETERS['A'] = {  # Black borders around video feed
+        'WINDOW': {
+            'X': 0,
+            'Y': 0,
+            'HEIGHT': FRAME_HEIGHT,
+            'WIDTH': FRAME_WIDTH,
+        },
     'MID': {
         'X': 491,
         'Y': 47,

@@ -14,7 +14,8 @@ from annotator.api_requests import get_round_states, get_train_rounds, get_train
 
 
 from annotator.data_generation.classes import PlayerStatusGenerator, PlayerOCRGenerator, KillFeedCTCGenerator, \
-    MidStatusGenerator, PauseStatusGenerator, ReplayStatusGenerator, GameGenerator
+    MidStatusGenerator, PauseStatusGenerator, ReplayStatusGenerator, GameGenerator, SmallerWindowStatusGenerator, \
+    PlayerLSTMGenerator
 
 training_data_directory = r'E:\Data\Overwatch\training_data'
 
@@ -30,7 +31,11 @@ lstm_kf_train_dir = os.path.join(training_data_directory, 'kf_lstm')
 def generate_data(rounds):
     from decimal import Decimal
     import time as timepackage
-    generators = [MidStatusGenerator(), KillFeedCTCGenerator(debug=False), PlayerStatusGenerator(), PlayerOCRGenerator()]
+    generators = [MidStatusGenerator(),
+                  KillFeedCTCGenerator(debug=False),
+                  PlayerStatusGenerator(),
+                  PlayerLSTMGenerator()
+                  ]
     #for g in generators:
     #    g.calculate_map_size(rounds)
     #    g.instantiate_environment()
@@ -88,7 +93,7 @@ def generate_data(rounds):
 
 def generate_data_for_pauses(rounds):
     import time as timepackage
-    generators = [ReplayStatusGenerator(debug=True), PauseStatusGenerator(debug=True)]
+    generators = [ReplayStatusGenerator(debug=True), PauseStatusGenerator(debug=True), SmallerWindowStatusGenerator(debug=True)]
     #for g in generators:
     #    g.calculate_map_size(rounds)
     #    g.instantiate_environment()
@@ -126,9 +131,9 @@ def generate_data_for_pauses(rounds):
             for i, g in enumerate(generators):
                 begin = timepackage.time()
                 if time_step == g.time_step:
-                    g.process_frame(frame, time_point)
+                    g.process_frame(frame, time_point, frame_ind)
                 elif frame_ind % (g.time_step / time_step) == 0:
-                    g.process_frame(frame, time_point)
+                    g.process_frame(frame, time_point, frame_ind)
                 average_times[i] += (timepackage.time()-begin)/100
 
             if frame_ind % 100 == 0:
@@ -159,6 +164,7 @@ def generate_data_for_game_cnn(vods):
             if g.generate_data:
                 process_vod = True
         if not process_vod:
+            print('skipping!')
             continue
         time_step = min(x.time_step for x in generators if x.generate_data)
         fvs = FileVideoStream(get_vod_path(v), 0, 0, time_step,
@@ -175,9 +181,9 @@ def generate_data_for_game_cnn(vods):
             for i, g in enumerate(generators):
                 begin = timepackage.time()
                 if time_step == g.time_step:
-                    g.process_frame(frame, time_point)
+                    g.process_frame(frame, time_point, frame_ind)
                 elif frame_ind % (g.time_step / time_step) == 0:
-                    g.process_frame(frame, time_point)
+                    g.process_frame(frame, time_point, frame_ind)
                 average_times[i] += (timepackage.time()-begin)/100
 
             if frame_ind % 100 == 0:
@@ -191,12 +197,11 @@ def generate_data_for_game_cnn(vods):
             g.cleanup_round()
         print('Finished in {} seconds!'.format(timepackage.time() - begin_time))
 
-
 def generate_data_for_cnn(rounds, vods):
     # rounds = rounds[:2]
     #generate_data_for_pauses(rounds)
     generate_data(rounds)
-    generate_data_for_game_cnn(vods)
+    #generate_data_for_game_cnn(vods)
 
 
 def save_round_info(rounds):

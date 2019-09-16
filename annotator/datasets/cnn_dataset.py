@@ -162,6 +162,7 @@ class CNNHDF5Dataset(Dataset):
             if f.endswith('.hdf5'):
                 if recent and int(f.replace('.hdf5', '')) < 9359:
                     continue
+                print(os.path.join(train_dir, f))
                 with h5py.File(os.path.join(train_dir, f), 'r') as h5f:
                     self.data_num += h5f['{}_img'.format(self.pre)].shape[0]
                     self.data_indices[self.data_num] = os.path.join(train_dir, f)

@@ -49,6 +49,7 @@ random.seed(manualSeed)
 np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
+model_path = os.path.join(working_dir, 'model.pth')
 
 
 if __name__ == '__main__':
@@ -88,6 +89,10 @@ if __name__ == '__main__':
         weights = train_set.generate_class_weights(mu=10, train_directory=train_dir)
 
     net = MidCNN(sets)
+    if os.path.exists(model_path): # Initialize from CNN model
+        d = torch.load(model_path)
+        print(d)
+        net.load_state_dict(d, strict=False)
     net.to(device)
 
     print('WEIGHTS')

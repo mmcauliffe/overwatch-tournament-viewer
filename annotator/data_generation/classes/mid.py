@@ -39,7 +39,8 @@ class MidStatusGenerator(DataGenerator):
         self.save_set_info()
 
     def figure_slot_params(self, r):
-        params = BOX_PARAMETERS[r['stream_vod']['film_format']]['MID']
+        film_format = r['game']['match']['event']['film_format']
+        params = BOX_PARAMETERS[film_format]['MID']
         self.slot_params = {}
         self.slot_params[1] = {'x': params['X'], 'y': params['Y']}
 

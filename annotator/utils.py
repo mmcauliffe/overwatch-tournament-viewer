@@ -133,31 +133,52 @@ def look_up_player_state(side, index, time, states, has_status=True):
     if ind == len(states['hero']):
         ind -= 1
     data['hero'] = states['hero'][ind]['hero']['name'].lower()
-
+    data['switch'] = 'not_switch'
+    if states['hero'][ind]['begin']!= 0 and time - states['hero'][ind]['begin'] < 1.2:
+        data['switch'] = 'switch'
     data['player'] = states['player'].lower()
+    return data
+
+
+def look_up_single_round_state(time, states, identifier):
+    data = {}
+    for t in states[identifier]:
+        if t['begin'] <= time < t['end']:
+            data[identifier] = t['status']
+            break
+    else:
+        data[identifier] = states[identifier][-1]['status']
+    return data
+
+
+def look_up_game_state(time, states):
+    data = {}
+    for k in ['game', 'left', 'right']:
+        ind = np.searchsorted(states['{}_array'.format(k)], time, side="right")
+        if ind == len(states[k]):
+            ind -= 1
+        data[k] = states[k][ind]['status']
     return data
 
 
 def look_up_round_state(time, states):
     data = {}
-    for t in states['overtimes']:
-        if t['begin'] <= time < t['end']:
-            data['overtime'] = t['status']
-            break
-    else:
-        data['overtime'] = states['overtimes'][-1]['status']
-    for t in states['pauses']:
-        if t['begin'] <= time < t['end']:
-            data['pause'] = t['status']
-            break
-    else:
-        data['pause'] = states['pauses'][-1]['status']
-    for t in states['replays']:
-        if t['begin'] <= time < t['end']:
-            data['replay'] = t['status']
-            break
-    else:
-        data['replay'] = states['replays'][-1]['status']
+    for k in ['overtime', 'pause', 'replay', 'smaller_window']:
+        for t in states[k]:
+            if t['begin'] <= time < t['end']:
+                data[k] = t['status']
+                break
+        else:
+            data[k] = states[k][-1]['status']
+    data['zoomed_bars'] = {}
+    for s in ['left', 'right']:
+        for t in states['zoomed_bars'][s]:
+            if t['begin'] <= time < t['end']:
+                data['zoomed_bars'][s] = t['status']
+                break
+        else:
+            data['zoomed_bars'][s] = states['zoomed_bars'][s][-1]['status']
+
     for t in states['point_status']:
         if t['begin'] <= time < t['end']:
             data['point_status'] = t['status']

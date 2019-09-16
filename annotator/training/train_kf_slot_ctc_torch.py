@@ -22,6 +22,7 @@ from annotator.training.ctc_helper import train_batch, val
 working_dir = r'E:\Data\Overwatch\models\kill_feed_ctc'
 os.makedirs(working_dir, exist_ok=True)
 log_dir = os.path.join(working_dir, 'log')
+
 TEST = True
 train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
 
@@ -29,8 +30,8 @@ train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
 
 cuda = True
 seed = 1
-batch_size = 128
-test_batch_size = 128
+batch_size = 100
+test_batch_size = 100
 num_epochs = 10
 lr = 0.001 # learning rate for Critic, not used by adadealta
 beta1 = 0.5 # beta1 for adam. default=0.5
@@ -56,10 +57,27 @@ np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
 
+def load_checkpoint(model, optimizer, filename='checkpoint'):
+    # Note: Input model & optimizer should be pre-defined.  This routine only updates their states.
+    start_epoch = 0
+    best_val_loss = np.inf
+    if os.path.isfile(filename):
+        print("=> loading checkpoint '{}'".format(filename))
+        checkpoint = torch.load(filename)
+        start_epoch = checkpoint['epoch']
+        best_val_loss = checkpoint.get('best_val_loss', np.inf)
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(filename, checkpoint['epoch']))
+    else:
+        print("=> no checkpoint found at '{}'".format(filename))
 
+    return model, optimizer, start_epoch, best_val_loss
 
 ### TRAINING
 
+model_path = os.path.join(working_dir, 'model.pth')
 if __name__ == '__main__':
 
     spectator_mode_set = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
@@ -144,7 +162,22 @@ if __name__ == '__main__':
                                                   shuffle=True, num_workers=num_workers)
     print(len(train_loader), 'batches')
     best_val_loss = np.inf
-    for epoch in range(num_epochs):
+    check_point_path = os.path.join(working_dir, 'checkpoint.pth')
+    net, optimizer, start_epoch, best_val_loss = load_checkpoint(net, optimizer, check_point_path)
+
+    if os.path.exists(model_path):  # Initialize from CNN model
+        d = torch.load(model_path)
+        print(d)
+        net.load_state_dict(d, strict=False)
+    net = net.to(device)
+    # now individually transfer the optimizer parts...
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
+    for epoch in range(start_epoch, num_epochs):
+        epoch_state_path = os.path.join(working_dir, 'netCRNN_{}.pth'.format(epoch))
+
         print('Epoch', epoch)
         begin = time.time()
         train_iter = iter(train_loader)
@@ -169,6 +202,8 @@ if __name__ == '__main__':
                                     use_batched_dataset=use_batched_dataset)
 
         # do checkpointing
-        torch.save(net.state_dict(), os.path.join(working_dir, 'netCRNN_{}.pth'.format(epoch)))
+        state = {'epoch': epoch + 1, 'state_dict': net.state_dict(),
+                 'optimizer': optimizer.state_dict(), 'best_val_loss': best_val_loss}
+        torch.save(state, check_point_path)
         print('Time per epoch: {} seconds'.format(time.time()-begin))
     print('Completed training, best val loss was: {}'.format(best_val_loss))

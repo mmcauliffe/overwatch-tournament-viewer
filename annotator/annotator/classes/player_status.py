@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import cv2
+import h5py
 from annotator.annotator.classes.base import BaseAnnotator
 from torch.autograd import Variable
 
@@ -10,7 +11,7 @@ from annotator.training.helper import load_set
 from annotator.training.ctc_helper import loadData
 from collections import defaultdict, Counter
 from annotator.config import sides, BOX_PARAMETERS
-
+from annotator.annotator.classes.hmm import HMM
 
 class Team(object):
     def __init__(self, side, player_states):
@@ -198,56 +199,19 @@ class PlayerState(object):
         print('ult', self.statuses['ult'])
         print('mech_deaths', mech_deaths)
         print('mech_states', mech_states)
-        ult_gains, ult_uses, ult_ends = [], [], []
+        ultimates = []
         end_time = self.statuses['alive'][-1]['end']
         for i, ult_state in enumerate(self.statuses['ult']):
             if i > 0 and ult_state['status'] == 'no_ult' and ult_state['end'] - ult_state['begin'] < 0.3 and ult_state['end'] != end_time:
                 continue
-            if False and self.hero_at_time(ult_state['begin']) == 'd.va':
-                for ms in mech_states:
-                    if ms['begin'] <= ult_state['begin'] <= ms['end'] and ms['status'] != 'out_of_mech':
-                        if ult_state['status'] == 'has_ult':
-                            add = True
-                            if len(ult_gains) > 0:
-                                last_ug = ult_gains[-1]
-                                if len(ult_uses) > 0:
-                                    last_uu = ult_uses[-1]
-                                    if last_uu < last_ug:
-                                        add = False
-                            print(add, ult_state)
-                            if add:
-                                ult_gains.append(ult_state['begin'])
-                        else:
-                            add = True
-                            for md in mech_deaths:
-                                if abs(md - ult_state['begin']) < 5:
-                                    add = False
-                                    break
-                            else:
-                                if len(ult_gains) == 0:
-                                    add = False
-                                elif len(ult_uses) > 0:
-                                    last_ug = ult_gains[-1]
-                                    last_uu = ult_uses[-1]
-                                    if last_uu > last_ug:
-                                        add = False
-                            if add:
-                                ult_uses.append(ult_state['begin'])
-                        break
-            else:
-                if ult_state['status'] == 'has_ult':
-                    if self.statuses['ult'][i-1]['status'] == 'using_ult':
-                        ult_gains.append(self.statuses['ult'][i-1]['begin'])
-                    else:
 
-                        ult_gains.append(ult_state['begin'])
-                elif ult_state['status'] == 'using_ult' and self.statuses['ult'][i-1]['status'] == 'has_ult':
-                    ult_uses.append(ult_state['begin'])
-                    ult_ends.append(ult_state['end'])
-        print('ult_gains', ult_gains)
-        print('ult_uses', ult_uses)
-        print('ult_ends', ult_ends)
-        return ult_gains, ult_uses, ult_ends
+            if ult_state['status'] == 'has_ult':
+                ultimate = {'gained': ult_state['begin']}
+                if i < len(self.statuses['ult']) - 1 and self.statuses['ult'][i+1]['status'] == 'using_ult':
+                    ultimate['used'] = self.statuses['ult'][i+1]['begin']
+                    ultimate['ended'] = self.statuses['ult'][i+1]['end']
+                ultimates.append(ultimate)
+        return ultimates
 
 
 class PlayerStatusAnnotator(BaseAnnotator):
@@ -268,6 +232,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             'hero': os.path.join(model_directory, 'hero_set.txt'),
             'alive': os.path.join(model_directory, 'alive_set.txt'),
             'ult': os.path.join(model_directory, 'ult_set.txt'),
+            'switch': os.path.join(model_directory, 'switch_set.txt'),
             'status': os.path.join(model_directory, 'status_set.txt'),
             'antiheal': os.path.join(model_directory, 'antiheal_set.txt'),
             'immortal': os.path.join(model_directory, 'immortal_set.txt'),
@@ -289,8 +254,20 @@ class PlayerStatusAnnotator(BaseAnnotator):
         for p in self.model.parameters():
             p.requires_grad = False
         self.model.to(device)
+        prob_path = os.path.join(model_directory, 'hmm_probs.h5')
+        self.hmms = {}
+        with h5py.File(prob_path, 'r') as hf5:
+            for k in ['hero', 'ult', 'status']:
+                self.hmms[k] = HMM(len(sets[k]))
+                self.hmms[k].startprob_ = hf5['{}_init'.format(k)][:].astype(np.float_)
+                trans = hf5['{}_trans'.format(k)][:].astype(np.float_)
+                for i in range(trans.shape[0]):
+                    if trans[i, i] == 0:
+                        trans[i, i] = 1
+                self.hmms[k].transmat_ = trans
         self.to_predict = {}
         self.statuses = {}
+        self.probs = {}
         self.shape = (self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
                       int(self.params['WIDTH'] * self.resize_factor))
         self.images = Variable(torch.FloatTensor(self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
@@ -304,6 +281,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
         self.inputs['right_color'][:] = input_sets['color'].index(self.right_team_color)
         for s in self.slot_params.keys():
             self.to_predict[s] = np.zeros(self.shape, dtype=np.uint8)
+            self.probs[s] = {k: [] for k in list(self.model.sets.keys())}
             self.statuses[s] = {k: [] for k in list(self.model.sets.keys())}
 
     def figure_slot_params(self, film_format):
@@ -361,6 +339,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             for k, v in predicteds.items():
                 #print(k)
                 #print(predicteds[k])
+                self.probs[s][k].extend(v.to('cpu').numpy())
                 _, predicteds[k] = torch.max(v.to('cpu'), 1)
 
 
@@ -385,6 +364,24 @@ class PlayerStatusAnnotator(BaseAnnotator):
     def generate_teams(self):
         teams = {'left': {}, 'right': {}}
         colors ={'left': self.left_team_color, 'right': self.right_team_color}
+
+        #for s, probs in self.probs.items():
+        #    for k, hmm in self.hmms.items():
+
+        #        self.statuses[s][k] = []
+        #        p = np.array(probs[k]).astype(np.float_)
+        #        log, z = hmm.decode(p)
+        #        for i, z1 in enumerate(z):
+        #            current_time = i * self.time_step
+        #            label = self.model.sets[k][z1]
+        #            if len(self.statuses[s][k]) == 0:
+        #                self.statuses[s][k].append({'begin': 0, 'end': 0, 'status': label})
+        #            else:
+        #                if label == self.statuses[s][k][-1]['status']:
+        #                    self.statuses[s][k][-1]['end'] = current_time
+        #                else:
+        #                    self.statuses[s][k].append(
+        #                        {'begin': current_time, 'end': current_time, 'status': label})
         for slot, status_dict in self.statuses.items():
             side, ind = slot
             new_statuses = {}
@@ -394,20 +391,23 @@ class PlayerStatusAnnotator(BaseAnnotator):
             else:
                 new_statuses['color'] = self.right_team_color
 
-            for k, v in status_dict.items():
+            for k, v in sorted(status_dict.items()):
                 if k == 'hero':
                     new_v = []
                     threshold = 5
                     for i, x in enumerate(v):
                         if not new_v:
-                            if i < len(v) - 1 and x['end'] - x['begin'] < v[i+1]['end'] - v[i+1]['begin'] and i == 0:
-                                continue
-                            else:
-                                new_v.append(x)
+                            new_v.append(x)
                         else:
+                            # No switches while dead
+                            alive_check = True
+                            for x2 in status_dict['alive']:
+                                if x2['begin'] <= x['begin'] <= x2['end'] and x2['status'] == 'dead':
+                                    alive_check = False
+                                    break
                             if x['status'] == new_v[-1]['status']:
                                 new_v[-1]['end'] = x['end']
-                            elif x['end'] - x['begin'] > threshold and x['status'] != 'n/a':
+                            elif x['end'] - x['begin'] > threshold and x['status'] != 'n/a' and alive_check:
                                 new_v.append(x)
                     new_v[0]['begin'] = 0
                     new_statuses[k] = new_v
@@ -432,6 +432,8 @@ class PlayerStatusAnnotator(BaseAnnotator):
                                 new_v[-1]['end'] = x['end']
                             else:
                                 if k == 'ult' and x['status'] == 'using_ult' and i != len(v) - 1 and v[i+1]['status'] == 'has_ult':
+                                    continue
+                                if k == 'ult' and x['status'] == 'has_ult' and i != len(v) - 1 and v[i+1]['status'] != 'using_ult':
                                     continue
                                 new_v.append(x)
                     new_v[0]['begin'] = 0

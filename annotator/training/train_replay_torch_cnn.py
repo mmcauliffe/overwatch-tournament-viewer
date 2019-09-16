@@ -119,7 +119,6 @@ if __name__ == '__main__':
         train_iter = iter(train_loader)
         i = 0
         while i < len(train_loader):
-            batch_begin = time.time()
             for p in net.parameters():
                 p.requires_grad = True
             net.train()
@@ -132,7 +131,6 @@ if __name__ == '__main__':
                 print('[%d/%d][%d/%d] Loss: %f' %
                       (epoch, num_epochs, i, len(train_loader), loss_avg.val()))
                 loss_avg.reset()
-            print('Batch took:', time.time()-batch_begin)
 
         best_val_loss = val(net, val_loader, device, losses, working_dir, best_val_loss, use_batched_dataset=use_batched_dataset)
 

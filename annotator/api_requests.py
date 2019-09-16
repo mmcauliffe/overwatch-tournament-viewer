@@ -69,6 +69,32 @@ def get_ability_list():
     ability_set.add('defense matrix')
     return ability_set
 
+def get_kill_feed_info():
+    url = config.api_url + 'abilities/deniable_abilities/'
+    r = requests.get(url)
+    resp = r.json()
+    deniable_ults = set()
+    for a in resp:
+        deniable_ults.add(a['name'].lower())
+    deniable_ults = sorted(deniable_ults)
+    ability_mapping = {}
+    npc_mapping = {}
+    url = config.api_url + 'npcs/'
+    r = requests.get(url)
+    resp = r.json()
+    for n in resp:
+        npc_mapping[n['name'].lower()] = n['spawning_hero']['name'].lower()
+    npcs = sorted(npc_mapping.keys())
+    url = config.api_url + 'heroes/'
+    r = requests.get(url)
+    resp = r.json()
+    for n in resp:
+        abilities = n['damaging_abilities'] + n['reviving_abilities'] + n['denying_abilities']
+        ability_mapping[n['name']] = [x['name'].lower() for x in abilities]
+    return {'deniable_ults': deniable_ults, 'npc_set': npcs, 'npc_mapping': npc_mapping,
+            'ability_mapping': ability_mapping}
+
+
 
 def get_train_info():
     url = config.api_url + 'train_info/'
@@ -115,6 +141,17 @@ def get_annotate_rounds():
 
 def get_annotate_vods_in_out_game():
     url = config.api_url + 'annotate_vods/in_out_game/'
+    r = requests.get(url)
+    return r.json()
+
+
+def get_event(id):
+    url = config.api_url + 'events/{}/'.format(id)
+    r = requests.get(url)
+    return r.json()
+
+def get_team(id):
+    url = config.api_url + 'teams/{}/'.format(id)
     r = requests.get(url)
     return r.json()
 
@@ -168,8 +205,17 @@ def get_round_states(round_id):
     return r.json()
 
 
+def get_game_states(vod_id):
+    url = config.api_url + 'vods/{}/game_status/'.format(vod_id)
+    r = requests.get(url)
+    data = r.json()
+    for k in ['game', 'left', 'right']:
+        data['{}_array'.format(k)] = np.array([x['end'] for x in data[k]])
+    return data
+
+
 def get_kf_events(round_id):
-    url = config.api_url + 'rounds/{}/kill_feed_events/'.format(round_id)
+    url = config.api_url + 'rounds/{}/kill_feed_items/'.format(round_id)
     r = requests.get(url)
     events = r.json()
     for e in events:

@@ -143,8 +143,9 @@ class PlayerOCRGenerator(CTCDataGenerator):
                 self.colors[slot] = self.right_color
 
     def figure_slot_params(self, r):
-        left_params = BOX_PARAMETERS[r['stream_vod']['film_format']]['LEFT_NAME']
-        right_params = BOX_PARAMETERS[r['stream_vod']['film_format']]['RIGHT_NAME']
+        film_format = r['game']['match']['event']['film_format']
+        left_params = BOX_PARAMETERS[film_format]['LEFT_NAME']
+        right_params = BOX_PARAMETERS[film_format]['RIGHT_NAME']
         self.slot_params = {}
         for side in sides:
             if side == 'left':

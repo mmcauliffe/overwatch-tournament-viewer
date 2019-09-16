@@ -31,6 +31,9 @@ class DataGenerator(object):
         self.slots = []
         self.slot_params = {}
         self.sets = {}
+        if debug:
+            os.makedirs(os.path.join(self.training_directory, 'debug', 'train'), exist_ok=True)
+            os.makedirs(os.path.join(self.training_directory, 'debug', 'val'), exist_ok=True)
 
     def check_set_info(self):
         return
@@ -152,7 +155,7 @@ class DataGenerator(object):
         self.figure_slot_params(r)
 
         self.indexes = random.sample(range(num_frames), num_frames)
-
+        print(self.image_height, int(self.image_height *self.resize_factor))
         train_shape = (self.num_train, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
         val_shape = (self.num_val, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
         self.hdf5_file = h5py.File(self.hd5_path, mode='w')

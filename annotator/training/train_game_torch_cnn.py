@@ -12,7 +12,7 @@ import random
 from annotator.datasets.cnn_dataset import CNNDataset, BatchedCNNDataset, CNNHDF5Dataset
 from annotator.datasets.helper import randomSequentialSampler
 import torch.nn as nn
-from annotator.models.cnn import MidCNN
+from annotator.models.cnn import GameCNN
 from annotator.training.cnn_helper import train_batch, val
 from annotator.training.helper import Averager, load_set
 
@@ -33,8 +33,8 @@ beta1 = 0.5 # beta1 for adam. default=0.5
 use_adam = True # whether to use adam (default is rmsprop)
 use_adadelta = False # whether to use adadelta (default is rmsprop)
 log_interval = 10
-image_height = 48
-image_width = 144
+image_height = 144
+image_width = 256
 num_channels = 3
 num_hidden = 256
 num_workers = 0
@@ -54,6 +54,8 @@ if __name__ == '__main__':
 
     set_files = {
         'game': os.path.join(train_dir, 'game_set.txt'),
+        #'left': os.path.join(train_dir, 'left_set.txt'),
+        #'right': os.path.join(train_dir, 'right_set.txt'),
     }
 
     sets = {}
@@ -85,7 +87,7 @@ if __name__ == '__main__':
             test_set = CNNDataset(root=os.path.join(train_dir, 'val_set'), sets=sets)
         weights = train_set.generate_class_weights(mu=10, train_directory=train_dir)
 
-    net = MidCNN(sets)
+    net = GameCNN(sets)
     net.to(device)
 
     print('WEIGHTS')
