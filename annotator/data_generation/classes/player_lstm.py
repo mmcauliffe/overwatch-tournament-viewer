@@ -26,6 +26,8 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
         self.data = {}
         self.current_sequence_index = 0
         self.process_index = 0
+        self.y_offset = 0
+        self.x_offset = 0
 
     def check_status(self, slot, time_point):
         for interval in self.status_state[slot]:
@@ -50,15 +52,13 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
                 params = self.slot_params[slot]
             x = params['x']
             y = params['y']
-            x_offset = random.randint(-4, 4)
-            y_offset = random.randint(-4, 4)
             if zoomed:
-                box = frame[y + y_offset: y + self.zoomed_height + y_offset,
-                      x + x_offset: x + self.zoomed_width + x_offset]
+                box = frame[y + self.y_offset: y + self.zoomed_height + self.y_offset,
+                      x + self.x_offset: x + self.zoomed_width + self.x_offset]
                 box = cv2.resize(box, (self.image_height, self.image_width))
             else:
-                box = frame[y + y_offset: y + self.image_height + y_offset,
-                      x + x_offset: x + self.image_width + x_offset]
+                box = frame[y + self.y_offset: y + self.image_height + self.y_offset,
+                      x + self.x_offset: x + self.image_width + self.x_offset]
             if False:
                 cv2.imshow('frame_{}'.format(slot), box)
                 print(time_point)
@@ -77,6 +77,8 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
         self.images = {}
         self.data = {}
         self.process_index = 0
+        self.x_offset = random.randint(-3, 3)
+        self.y_offset = random.randint(-3, 3)
 
         for slot in self.slots:
             self.images[slot] = np.zeros(
@@ -93,17 +95,26 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
         if self.process_index == 0:
             return
         for i, slot in enumerate(self.slots):
+            if self.current_sequence_index >= len(self.indexes):
+                continue
             index = self.indexes[self.current_sequence_index]
             if index < self.num_train:
                 pre = 'train'
             else:
                 pre = 'val'
                 index -= self.num_train
+            print(index, self.current_sequence_index, len(self.indexes))
+            #for j in range(self.frames_per_seq):
+            #    cv2.imshow('frame', np.transpose(self.images[slot][j, ...], (1, 2, 0)))
+            #    for k in self.sets.keys():
+            #        print(k, self.sets[k][self.data[slot][k][j]])
+            #    cv2.waitKey()
+            #    break
             self.hdf5_file["{}_img".format(pre)][index, ...] = self.images[slot][...]
 
             for k in self.sets.keys():
                 self.hdf5_file['{}_{}_label'.format(pre, k)][index, ...] = self.data[slot][k][None]
-        self.current_sequence_index += 1
+            self.current_sequence_index += 1
         self.reset_cached_data()
 
     def add_new_round_info(self, r):
@@ -112,7 +123,7 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
             return
         self.current_round_id = r['id']
         self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
+        if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
         self.get_data(r)
@@ -120,10 +131,17 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
         expected_duration = 0
         for beg, end in r['sequences']:
             expected_duration += end - beg
+            print(beg, end)
+        print(expected_duration, expected_duration / self.time_step)
         per_slot_frames = int(expected_duration / self.time_step)
-        num_seqs = int(per_slot_frames / self.frames_per_seq) + 1
-
+        print(per_slot_frames)
+        if per_slot_frames % self.frames_per_seq == 0:
+            num_seqs = int(per_slot_frames / self.frames_per_seq)
+        else:
+            num_seqs = int(per_slot_frames / self.frames_per_seq) + 1
+        print(num_seqs)
         total_num_seqs = num_seqs * self.num_slots
+        print(total_num_seqs)
         self.num_train = int(total_num_seqs * 0.8)
         self.num_val = total_num_seqs - self.num_train
 
@@ -172,6 +190,8 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
         self.save_current_sequence()
         if not self.generate_data:
             return
+        print('CLEAN UP')
+        print(self.process_index, self.current_sequence_index, len(self.indexes))
         with open(self.rounds_analyzed_path, 'w') as f:
             for r in self.analyzed_rounds:
                 f.write('{}\n'.format(r))

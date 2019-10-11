@@ -1,12 +1,8 @@
 import os
+import shutil
 import torch
-import torchvision
-import torchvision.transforms as transforms
-import h5py
 import numpy as np
-import torch.utils.data as data
-import matplotlib.pyplot as plt
-from torch.autograd import Variable
+
 import torch.optim as optim
 import random
 from annotator.datasets.cnn_dataset import CNNDataset, BatchedCNNDataset, CNNHDF5Dataset
@@ -21,9 +17,9 @@ train_dir = r'E:\Data\Overwatch\training_data\player_status'
 
 cuda = True
 seed = 1
-batch_size = 100
-test_batch_size = 200
-num_epochs = 10
+batch_size = 300
+test_batch_size = 500
+num_epochs = 5
 lr = 0.001 # learning rate for Critic, not used by adadealta
 momentum = 0.5
 beta1 = 0.5 # beta1 for adam. default=0.5
@@ -48,8 +44,6 @@ np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
 working_dir = r'E:\Data\Overwatch\models\player_status'
-if recent:
-    working_dir += '_recent'
 os.makedirs(working_dir, exist_ok=True)
 log_dir = os.path.join(working_dir, 'log')
 model_path = os.path.join(working_dir, 'model.pth')
@@ -61,6 +55,7 @@ if __name__ == '__main__':
          }
     input_sets = {}
     for k, v in input_set_files.items():
+        shutil.copyfile(v, os.path.join(working_dir, '{}_set.txt'.format(k)))
         input_sets[k] = load_set(v)
 
     set_files = {  # 'player': os.path.join(train_dir, 'player_set.txt'),
@@ -74,6 +69,7 @@ if __name__ == '__main__':
     }
     sets = {}
     for k, v in set_files.items():
+        shutil.copyfile(v, os.path.join(working_dir, '{}_set.txt'.format(k)))
         sets[k] = load_set(v)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -102,8 +98,8 @@ if __name__ == '__main__':
 
     if os.path.exists(model_path): # Initialize from CNN model
         d = torch.load(model_path)
-        print(d)
         net.load_state_dict(d, strict=False)
+        print('Loaded previous model')
 
     print('WEIGHTS')
     for k, v in weights.items():

@@ -8,50 +8,8 @@ import sys
 import numpy as np
 
 
-class CTCDataset(Dataset):
-    def __init__(self, root=None, transform=None, target_transform=None):
-        self.env = lmdb.open(
-            root,
-            max_readers=1,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False)
-
-        if not self.env:
-            print('cannot creat lmdb from %s' % (root))
-            sys.exit(0)
-
-        with self.env.begin(write=False) as txn:
-            nSamples = int(txn.get('num-samples'.encode('utf-8')))
-            self.nSamples = nSamples
-
-        self.transform = transform
-        self.target_transform = target_transform
-
-    def __len__(self):
-        return self.nSamples
-
-    def __getitem__(self, index):
-        assert index <= len(self), 'index range error'
-        index += 1
-        with self.env.begin(write=False) as txn:
-            img_key = 'image-%09d' % index
-            img = pickle.loads(txn.get(img_key.encode('utf8')))
-
-            if self.transform is not None:
-                img = self.transform(img)
-
-            label_key = 'label-%09d' % index
-            label = txn.get(label_key.encode('utf8')).decode('utf8')
-
-            if self.target_transform is not None:
-                label = self.target_transform(label)
-
-        return (img, label)
-
 class CTCHDF5Dataset(Dataset):
-    def __init__(self, train_dir, batch_size, blank_ind, pre='train'):
+    def __init__(self, train_dir, batch_size, blank_ind, pre='train', recent=False):
         self.pre = pre
         self.batch_size = batch_size
         self.blank_ind = blank_ind
@@ -59,9 +17,9 @@ class CTCHDF5Dataset(Dataset):
         self.data_indices = {}
         count = 0
         for f in os.listdir(train_dir):
-            #if f != '8184.hdf5':
-            #    continue
             if f.endswith('.hdf5'):
+                if recent and int(f.replace('.hdf5', '')) < 9400:
+                    continue
                 with h5py.File(os.path.join(train_dir, f), 'r') as h5f:
                     self.data_num += h5f['{}_img'.format(self.pre)].shape[0]
                     self.data_indices[self.data_num] = os.path.join(train_dir, f)
@@ -91,12 +49,14 @@ class CTCHDF5Dataset(Dataset):
         with h5py.File(path, 'r') as hf5:
             lengths = hf5["{}_label_sequence_length".format(self.pre)][real_index:real_index+self.batch_size]
             im = hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            rd = hf5['{}_round'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             specs = hf5['{}_spectator_mode_label'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             labs = hf5["{}_label_sequence".format(self.pre)][real_index:real_index+self.batch_size, ...].astype(np.int16)
             # For removing all blank images
             inds = lengths != 1
 
             im = im[inds]
+            rd = rd[inds]
             specs = specs[inds]
             labs = labs[inds]
             lengths = lengths[inds]
@@ -107,6 +67,7 @@ class CTCHDF5Dataset(Dataset):
             labs += 1
             inputs['image']= torch.from_numpy(im).float()
             inputs['spectator_mode'] = torch.from_numpy(specs).long()
+            inputs['round'] = torch.from_numpy(rd).long()
             outputs['the_labels'] = torch.from_numpy(labs).long()
             outputs['label_length'] = torch.from_numpy(lengths).long()
         if next_file:
@@ -115,12 +76,14 @@ class CTCHDF5Dataset(Dataset):
             with h5py.File(next_path, 'r') as hf5:
                 lengths = hf5["{}_label_sequence_length".format(self.pre)][0:from_next]
                 im= hf5['{}_img'.format(self.pre)][0:from_next, ...]
+                rd= hf5['{}_round'.format(self.pre)][0:from_next, ...]
                 specs= hf5['{}_spectator_mode_label'.format(self.pre)][0:from_next, ...]
                 labs = hf5["{}_label_sequence".format(self.pre)][0:from_next, ...].astype(np.int16)
                 # For removing all blank images
                 inds = lengths != 1
 
                 im = im[inds]
+                rd = rd[inds]
                 specs = specs[inds]
                 labs = labs[inds]
                 lengths = lengths[inds]
@@ -131,6 +94,7 @@ class CTCHDF5Dataset(Dataset):
                 labs += 1
                 inputs['image' ]= torch.cat((inputs['image'], torch.from_numpy(im).float()), 0)
                 inputs['spectator_mode'] = torch.cat((inputs['spectator_mode'], torch.from_numpy(specs).long()), 0)
+                inputs['round'] = torch.cat((inputs['round'], torch.from_numpy(rd).long()), 0)
 
                 outputs['the_labels'] = torch.cat((outputs['the_labels'], torch.from_numpy(labs).long()), 0)
                 outputs['label_length'] = torch.cat((outputs['label_length'], torch.from_numpy(lengths).long()), 0)
@@ -212,7 +176,7 @@ class LabelConverter(object):
             assert t.numel() == length, "text with length: {} does not match declared length: {}".format(t.numel(),
                                                                                                          length)
             if raw:
-                return ' '.join([self.label_set[i - 1] for i in t])
+                return ','.join([self.label_set[i - 1] for i in t])
             else:
                 char_list = []
                 for i in range(length):
@@ -221,6 +185,7 @@ class LabelConverter(object):
                 return ','.join(char_list)
         else:
             # batch mode
+
             assert t.numel() == length.sum(), "texts with length: {} does not match declared length: {}".format(
                 t.numel(), length.sum())
             texts = []

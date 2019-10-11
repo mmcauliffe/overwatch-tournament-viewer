@@ -1,5 +1,6 @@
 import os
 import torch
+import shutil
 #import torchvision
 #import torchvision.transforms as transforms
 import h5py
@@ -13,7 +14,7 @@ import torch.optim as optim
 import random
 import itertools
 from torch.nn import CTCLoss
-from annotator.datasets.ctc_dataset import CTCDataset, CTCHDF5Dataset, LabelConverter
+from annotator.datasets.ctc_dataset import CTCHDF5Dataset, LabelConverter
 from annotator.datasets.helper import randomSequentialSampler
 from annotator.training.helper import Averager, load_set
 from annotator.models import crnn
@@ -59,7 +60,12 @@ torch.manual_seed(manualSeed)
 ### TRAINING
 
 if __name__ == '__main__':
-    label_set = load_set(os.path.join(train_dir, 'labels_set.txt'))
+    label_path = os.path.join(train_dir, 'labels_set.txt')
+    label_set = load_set(label_path)
+    spec_mode_path = os.path.join(train_dir, 'spectator_mode_set.txt')
+    spectator_mode_set = load_set(spec_mode_path)
+    shutil.copyfile(label_path, os.path.join(working_dir, 'labels_set.txt'))
+    shutil.copyfile(spec_mode_path, os.path.join(working_dir, 'spectator_mode_set.txt'))
     for i, lab in enumerate(label_set):
         if not lab:
             blank_ind = i
@@ -70,18 +76,10 @@ if __name__ == '__main__':
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
 
-    if use_hdf5:
-        train_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='train')
-        test_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='val')
-        #weights = train_set.generate_class_weights(mu=10)
-        print(len(train_set))
-    else:
-        train_set = CTCDataset(root=os.path.join(train_dir, 'training_set'))
-        if not random_sample:
-            sampler = randomSequentialSampler(train_set, batch_size)
-        else:
-            sampler = None
-        test_set = CTCDataset(root=os.path.join(train_dir, 'val_set'))
+    train_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='train')
+    test_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='val')
+    #weights = train_set.generate_class_weights(mu=10)
+    print(len(train_set))
 
 
     # net init
@@ -96,7 +94,7 @@ if __name__ == '__main__':
 
 
     num_classes = len(label_set) + 1
-    net = crnn.CRNN(image_height, num_channels, num_classes, num_hidden)
+    net = crnn.KillFeedCRNN(label_set, spectator_mode_set)
     net.apply(weights_init)
     print(net)
 
@@ -105,13 +103,16 @@ if __name__ == '__main__':
     criterion = CTCLoss()
 
     image = torch.FloatTensor(batch_size, 3, image_height, image_width)
+    spectator_modes = torch.IntTensor(batch_size)
     text = torch.IntTensor(batch_size * 5)
     length = torch.IntTensor(batch_size)
     if cuda and torch.cuda.is_available():
         net.cuda()
         image = image.cuda()
+        spectator_modes = spectator_modes.cuda()
         criterion = criterion.cuda()
     image = Variable(image)
+    spectator_modes = Variable(spectator_modes)
     text = Variable(text)
     length = Variable(length)
 
@@ -148,7 +149,7 @@ if __name__ == '__main__':
                 p.requires_grad = True
             net.train()
 
-            cost = train_batch(net, train_iter, device, criterion, optimizer,image, text, length, use_batched_dataset=use_batched_dataset)
+            cost = train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length, use_batched_dataset=use_batched_dataset)
             i += 1
             if cost is None:
                 continue
@@ -159,7 +160,7 @@ if __name__ == '__main__':
                       (epoch, num_epochs, i, len(train_loader), loss_avg.val()))
                 loss_avg.reset()
 
-        best_val_loss = val(net, val_loader, device, criterion, working_dir, best_val_loss, converter,image, text, length,
+        best_val_loss = val(net, val_loader, device, criterion, working_dir, best_val_loss, converter,image, spectator_modes, text, length,
                                     use_batched_dataset=use_batched_dataset)
 
         # do checkpointing

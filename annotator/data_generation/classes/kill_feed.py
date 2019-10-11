@@ -64,7 +64,10 @@ class KillFeedCTCGenerator(CTCDataGenerator):
     def figure_slot_params(self, r):
         from datetime import datetime
         self.slot_params = {}
-        film_format = r['game']['match']['event']['film_format']
+        if r['stream_vod']['film_format'] != 'O':
+            film_format = r['stream_vod']['film_format']
+        else:
+            film_format = r['game']['match']['event']['film_format']
         params = BOX_PARAMETERS[film_format]['KILL_FEED_SLOT']
         broadcast_date = datetime.strptime(r['stream_vod']['broadcast_date'], '%Y-%m-%dT%H:%M:%SZ')
         status_date_start = datetime(2019, 1, 1)
@@ -184,6 +187,11 @@ class KillFeedCTCGenerator(CTCDataGenerator):
                 # self.train_mean += box / self.hdf5_file['train_img'].shape[0]
                 sequence_length = len(sequence)
                 self.hdf5_file['{}_spectator_mode_label'.format(pre)][index] = SPECTATOR_MODES.index(self.spec_mode)
+                #if time_point > 262:
+                #    print(sequence)
+                #    print(raw_sequence)
+                #    cv2.imshow('frame', np.transpose(box, (1, 2, 0)))
+                #    cv2.waitKey()
                 if sequence:
                     self.hdf5_file["{}_label_sequence_length".format(pre)][index] = sequence_length
                     self.hdf5_file["{}_label_sequence".format(pre)][index, 0:len(sequence)] = sequence
@@ -206,7 +214,7 @@ class KillFeedCTCGenerator(CTCDataGenerator):
     def add_new_round_info(self, r):
         self.current_round_id = r['id']
         self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
+        if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
         self.get_data(r)
@@ -238,15 +246,13 @@ class KillFeedCTCGenerator(CTCDataGenerator):
             else:
                 shape = val_shape
                 count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
-                                          maxshape=(None, shape[1], shape[2], shape[3]))
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
-            self.hdf5_file.create_dataset("{}_exist_label".format(pre), (count,), np.uint8, maxshape=(None,))
-            self.hdf5_file.create_dataset("{}_spectator_mode_label".format(pre), (count,), np.uint8, maxshape=(None,))
+            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8)
+            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16)
+            self.hdf5_file.create_dataset("{}_exist_label".format(pre), (count,), np.uint8)
+            self.hdf5_file.create_dataset("{}_spectator_mode_label".format(pre), (count,), np.uint8)
             self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
-                                          np.int16, maxshape=(None, self.max_sequence_length),
+                                          np.int16,
                                           fillvalue=len(self.label_set))
-            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8,
-                                          maxshape=(None,), fillvalue=1)
+            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8, fillvalue=1)
 
         self.process_index = 0

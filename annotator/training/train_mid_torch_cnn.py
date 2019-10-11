@@ -91,8 +91,8 @@ if __name__ == '__main__':
     net = MidCNN(sets)
     if os.path.exists(model_path): # Initialize from CNN model
         d = torch.load(model_path)
-        print(d)
         net.load_state_dict(d, strict=False)
+        print('Loaded previous model')
     net.to(device)
 
     print('WEIGHTS')

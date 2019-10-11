@@ -1,7 +1,5 @@
 import os
 import torch
-import torchvision
-import torchvision.transforms as transforms
 import h5py
 import numpy as np
 import torch.utils.data as data
@@ -24,9 +22,9 @@ train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
 
 cuda = True
 seed = 1
-batch_size = 100
-test_batch_size = 100
-num_epochs = 10
+batch_size = 200
+test_batch_size = 400
+num_epochs = 5
 lr = 0.001 # learning rate for Critic, not used by adadealta
 momentum = 0.5
 beta1 = 0.5 # beta1 for adam. default=0.5

@@ -77,6 +77,14 @@ def get_kill_feed_info():
     for a in resp:
         deniable_ults.add(a['name'].lower())
     deniable_ults = sorted(deniable_ults)
+    url = config.api_url + 'abilities/denying_abilities/'
+    r = requests.get(url)
+    resp = r.json()
+    denying_abilities = set()
+    for a in resp:
+        denying_abilities.add(a['name'].lower())
+
+    denying_abilities = sorted(denying_abilities)
     ability_mapping = {}
     npc_mapping = {}
     url = config.api_url + 'npcs/'
@@ -90,9 +98,9 @@ def get_kill_feed_info():
     resp = r.json()
     for n in resp:
         abilities = n['damaging_abilities'] + n['reviving_abilities'] + n['denying_abilities']
-        ability_mapping[n['name']] = [x['name'].lower() for x in abilities]
+        ability_mapping[n['name'].lower()] = [x['name'].lower() for x in abilities]
     return {'deniable_ults': deniable_ults, 'npc_set': npcs, 'npc_mapping': npc_mapping,
-            'ability_mapping': ability_mapping}
+            'ability_mapping': ability_mapping, 'denying_abilities': denying_abilities}
 
 
 
@@ -209,7 +217,7 @@ def get_game_states(vod_id):
     url = config.api_url + 'vods/{}/game_status/'.format(vod_id)
     r = requests.get(url)
     data = r.json()
-    for k in ['game', 'left', 'right']:
+    for k in ['game', 'spectator_mode', 'left', 'right']:
         data['{}_array'.format(k)] = np.array([x['end'] for x in data[k]])
     return data
 

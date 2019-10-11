@@ -1,5 +1,6 @@
 import os
 import torch
+import shutil
 #import torchvision
 #import torchvision.transforms as transforms
 import h5py
@@ -13,7 +14,7 @@ import torch.optim as optim
 import random
 import itertools
 from torch.nn import CTCLoss
-from annotator.datasets.ctc_dataset import CTCDataset, CTCHDF5Dataset, LabelConverter
+from annotator.datasets.ctc_dataset import CTCHDF5Dataset, LabelConverter
 from annotator.datasets.helper import randomSequentialSampler
 from annotator.training.helper import Averager, load_set
 from annotator.models import crnn
@@ -30,8 +31,8 @@ train_dir = r'E:\Data\Overwatch\training_data\kill_feed_ctc'
 
 cuda = True
 seed = 1
-batch_size = 100
-test_batch_size = 100
+batch_size = 200
+test_batch_size = 500
 num_epochs = 10
 lr = 0.001 # learning rate for Critic, not used by adadealta
 beta1 = 0.5 # beta1 for adam. default=0.5
@@ -50,6 +51,7 @@ manualSeed = 1234 # reproduce experiemnt
 random_sample = True
 use_batched_dataset = True
 use_hdf5 = True
+recent = False
 
 
 random.seed(manualSeed)
@@ -79,9 +81,12 @@ def load_checkpoint(model, optimizer, filename='checkpoint'):
 
 model_path = os.path.join(working_dir, 'model.pth')
 if __name__ == '__main__':
-
-    spectator_mode_set = load_set(os.path.join(train_dir, 'spectator_mode_set.txt'))
-    label_set = load_set(os.path.join(train_dir, 'labels_set.txt'))
+    label_path = os.path.join(train_dir, 'labels_set.txt')
+    spec_mode_path = os.path.join(train_dir, 'spectator_mode_set.txt')
+    spectator_mode_set = load_set(spec_mode_path)
+    label_set = load_set(label_path)
+    shutil.copyfile(label_path, os.path.join(working_dir, 'labels_set.txt'))
+    shutil.copyfile(spec_mode_path, os.path.join(working_dir, 'spectator_mode_set.txt'))
     for i, lab in enumerate(label_set):
         if not lab:
             blank_ind = i
@@ -93,8 +98,8 @@ if __name__ == '__main__':
     print(device)
 
     if use_hdf5:
-        train_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='train')
-        test_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='val')
+        train_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='train', recent=recent)
+        test_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='val', recent=recent)
         #weights = train_set.generate_class_weights(mu=10)
         print(len(train_set))
     else:

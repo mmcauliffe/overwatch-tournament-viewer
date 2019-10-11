@@ -7,15 +7,16 @@ import numpy as np
 from annotator.data_generation.classes.ctc import CTCDataGenerator
 from annotator.api_requests import get_player_states
 from annotator.config import na_lab, sides, BOX_PARAMETERS
-from annotator.game_values import COLOR_SET, PLAYER_CHARACTER_SET
+from annotator.game_values import COLOR_SET, PLAYER_CHARACTER_SET, SPECTATOR_MODES
 from annotator.utils import look_up_player_state
 
 
 class PlayerOCRGenerator(CTCDataGenerator):
     identifier = 'player_ocr'
     num_slots = 12
-    time_step = 10
+    time_step = 5
     num_variations = 1
+    usable_annotations = ['M', 'O']
 
     def __init__(self, debug=False):
         super(PlayerOCRGenerator, self).__init__()
@@ -78,6 +79,7 @@ class PlayerOCRGenerator(CTCDataGenerator):
 
                 #self.train_mean += box / self.hdf5_file['train_img'].shape[0]
                 sequence_length = len(sequence)
+                self.hdf5_file['{}_spectator_mode_label'.format(pre)][index] = SPECTATOR_MODES.index(self.spec_mode)
                 if sequence:
                     self.hdf5_file["{}_label_sequence_length".format(pre)][index] = sequence_length
                     self.hdf5_file["{}_label_sequence".format(pre)][index, 0:len(sequence)] = sequence
@@ -88,10 +90,11 @@ class PlayerOCRGenerator(CTCDataGenerator):
     def add_new_round_info(self, r):
         self.current_round_id = r['id']
         self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
+        if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
         num_frames = 0
+        self.spec_mode = r['spectator_mode'].lower()
         for beg, end in r['sequences']:
             print(beg, end)
             expected_frame_count = int((end - beg) / self.time_step)
@@ -121,14 +124,12 @@ class PlayerOCRGenerator(CTCDataGenerator):
             else:
                 shape = val_shape
                 count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
-                                          maxshape=(None, shape[1], shape[2], shape[3]))
+            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8)
             self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
-                                          np.int16, maxshape=(None, self.max_sequence_length),
-                                          fillvalue=len(self.label_set))
-            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8,
-                                          maxshape=(None,), fillvalue=1)
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
+                                          np.int16, fillvalue=len(self.label_set))
+            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8, fillvalue=1)
+            self.hdf5_file.create_dataset("{}_spectator_mode_label".format(pre), (count,), np.uint8)
+            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16)
 
         self.process_index = 0
         self.states = get_player_states(r['id'])
@@ -143,7 +144,10 @@ class PlayerOCRGenerator(CTCDataGenerator):
                 self.colors[slot] = self.right_color
 
     def figure_slot_params(self, r):
-        film_format = r['game']['match']['event']['film_format']
+        if r['stream_vod']['film_format'] != 'O':
+            film_format = r['stream_vod']['film_format']
+        else:
+            film_format = r['game']['match']['event']['film_format']
         left_params = BOX_PARAMETERS[film_format]['LEFT_NAME']
         right_params = BOX_PARAMETERS[film_format]['RIGHT_NAME']
         self.slot_params = {}

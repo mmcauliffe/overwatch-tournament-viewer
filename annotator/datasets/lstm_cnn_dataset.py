@@ -62,6 +62,7 @@ class LstmCnnHDF5Dataset(Dataset):
 
         self.weights = {}
         for k in self.sets.keys():
+            print(counters[k])
             total = np.sum(np.array(list(counters[k].values())))
             for k2, v2 in counters[k].items():
                 print(self.sets[k][k2], v2)
@@ -87,17 +88,19 @@ class LstmCnnHDF5Dataset(Dataset):
         inputs = {}
         outputs = {}
         with h5py.File(path, 'r') as hf5:
-            # if hf5['{}_hero_label'.format(self.pre)][real_index] == 0:
-            #    for i in range(self.batch_size):
-            #        print('index', i)
-            #        for k,s in self.sets.items():
-            #            print(k, s[hf5['{}_{}_label'.format(self.pre, k)][real_index+i]])
-            #        print('round', path)
-            #        print('time_point', hf5['{}_time_point'.format(self.pre)][real_index+i])
-            #        cv2.imshow('frame_{}'.format(i), np.transpose(hf5['{}_img'.format(self.pre)][real_index+i, ...], (1, 2, 0)))
-            #    cv2.waitKey()
+            if False:
+                for i in range(self.batch_size):
+                    print('index', i)
+                    for j in range(100):
+                        for k,s in self.sets.items():
+                            print(k, s[hf5['{}_{}_label'.format(self.pre, k)][real_index+i, j]])
+                        print('round', path)
+                        #print('time_point', hf5['{}_time_point'.format(self.pre)][real_index+i, j])
+                        cv2.imshow('frame', np.transpose(hf5['{}_img'.format(self.pre)][real_index+i, j, ...], (1, 2, 0)))
+                        cv2.waitKey()
             inputs['image'] = torch.from_numpy(
                 hf5['{}_img'.format(self.pre)][real_index:real_index + self.batch_size, ...]).float()
+
             for k in self.input_sets.keys():
                 inputs[k] = torch.from_numpy(
                     hf5['{}_{}_label'.format(self.pre, k)][real_index:real_index + self.batch_size, ...]).long()

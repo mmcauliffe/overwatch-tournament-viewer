@@ -15,15 +15,15 @@ from annotator.config import BOX_PARAMETERS
 from annotator.data_generation.classes import PlayerStatusGenerator, PlayerOCRGenerator, KillFeedCTCGenerator, \
     MidStatusGenerator
 
-ROUND = 9480
+ROUND = 9960
 
 ROUND_TIME = 0
 
 
 def display_round(r):
     import time as timepackage
-    #generators = [PlayerStatusGenerator(), PlayerOCRGenerator(), KillFeedCTCGenerator(), MidStatusGenerator()]
-    generators = [PlayerStatusGenerator()]
+    #generators = [PlayerStatusGenerator(), KillFeedCTCGenerator(), MidStatusGenerator()]
+    generators = [PlayerStatusGenerator(), PlayerOCRGenerator()]
     print(r)
     print(r['spectator_mode'])
     begin_time = timepackage.time()

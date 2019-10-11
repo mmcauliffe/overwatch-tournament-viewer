@@ -1,25 +1,20 @@
 import os
 import torch
-import torchvision
-import torchvision.transforms as transforms
-import h5py
 import numpy as np
-import torch.utils.data as data
-import matplotlib.pyplot as plt
-from torch.autograd import Variable
 import torch.optim as optim
 import random
 from annotator.datasets.lstm_cnn_dataset import LstmCnnHDF5Dataset
-from annotator.datasets.helper import randomSequentialSampler
 import torch.nn as nn
-from annotator.models.lstm import StatusLSTM, EncoderCNN, DecoderRNN
+from annotator.models.rnn import StatusGRU
 from annotator.training.lstm_helper import train_batch, val
 from annotator.training.helper import Averager, load_set
 
 TEST = True
+
+working_dir = r'E:\Data\Overwatch\models\player_rnn'
 train_dir = r'E:\Data\Overwatch\training_data\player_lstm'
 cnn_model = r'E:\Data\Overwatch\models\player_status\model.pth'
-lstm_model = r'E:\Data\Overwatch\models\player_lstm\model.pth'
+lstm_model = os.path.join(working_dir, 'model.pth')
 
 cuda = True
 seed = 1
@@ -43,23 +38,12 @@ manualSeed = 1234 # reproduce experiemnt
 random_sample = True
 recent = False # Only use recent rounds
 
-
-# EncoderCNN architecture
-CNN_fc_hidden1, CNN_fc_hidden2 = 256, 256
-CNN_embed_dim = 128      # latent dim extracted by 2D CNN
-img_x, img_y = image_width, image_height  # resize video 2d frame size
-dropout_p = 0.0          # dropout probability
-
-# DecoderRNN architecture
-RNN_hidden_layers = 3
-RNN_hidden_nodes = 128
-RNN_FC_dim = 128
+load_CNN_pretrained = True
+train_CNN = True
 
 random.seed(manualSeed)
 np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
-
-working_dir = r'E:\Data\Overwatch\models\player_lstm'
 os.makedirs(working_dir, exist_ok=True)
 log_dir = os.path.join(working_dir, 'log')
 
@@ -76,6 +60,7 @@ if __name__ == '__main__':
         'hero': os.path.join(train_dir, 'hero_set.txt'),
         'alive': os.path.join(train_dir, 'alive_set.txt'),
         'ult': os.path.join(train_dir, 'ult_set.txt'),
+        'switch': os.path.join(train_dir, 'switch_set.txt'),
         'status': os.path.join(train_dir, 'status_set.txt'),
         'antiheal': os.path.join(train_dir, 'antiheal_set.txt'),
         'immortal': os.path.join(train_dir, 'immortal_set.txt'),
@@ -90,28 +75,22 @@ if __name__ == '__main__':
     train_set = LstmCnnHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=batch_size, pre='train', recent=recent)
     test_set = LstmCnnHDF5Dataset(train_dir, sets=sets, input_sets=input_sets, batch_size=test_batch_size, pre='val', recent=recent)
     weights = train_set.generate_class_weights(mu=10)
-    print(len(train_set))
 
-    # Create model
-    #cnn_encoder = EncoderCNN(img_x=img_x, img_y=img_y, fc_hidden1=CNN_fc_hidden1, fc_hidden2=CNN_fc_hidden2,
-    #                         drop_p=dropout_p, CNN_embed_dim=CNN_embed_dim).to(device)
-
-    #rnn_decoder = DecoderRNN(sets, CNN_embed_dim=CNN_embed_dim, h_RNN_layers=RNN_hidden_layers, h_RNN=RNN_hidden_nodes,
-    #                         h_FC_dim=RNN_FC_dim, drop_p=dropout_p).to(device)
-    #crnn_params = list(cnn_encoder.parameters()) + list(rnn_decoder.parameters())
-
-    net = StatusLSTM(sets, input_sets)
+    net = StatusGRU(sets, input_sets)
     crnn_params = net.parameters()
     net.to(device)
 
-    if os.path.exists(lstm_model): # Initialize from CNN model
-        d = torch.load(lstm_model)
-        print(d)
-        net.load_state_dict(d, strict=False)
-    elif os.path.exists(cnn_model): # Initialize from CNN model
-        d = torch.load(cnn_model)
-        print(d)
-        net.cnn.load_state_dict(d, strict=False)
+    start_epoch = 0
+    if load_CNN_pretrained:
+        if False and os.path.exists(lstm_model): # Initialize from CNN model
+            d = torch.load(lstm_model)
+            print('LOADED RNN MODEL')
+            net.load_state_dict(d, strict=False)
+            start_epoch = 1
+        elif os.path.exists(cnn_model): # Initialize from CNN model
+            d = torch.load(cnn_model)
+            net.cnn.load_state_dict(d, strict=False)
+            print('LOADED CNN MODEL')
 
     print('WEIGHTS')
     for k, v in weights.items():
@@ -138,24 +117,23 @@ if __name__ == '__main__':
 
     print(len(train_loader), 'batches')
     best_val_loss = np.inf
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         print('Epoch', epoch)
         begin = time.time()
         train_iter = iter(train_loader)
         i = 0
         while i < len(train_loader):
             net.train()
-            net.cnn.eval()
             for p in net.parameters():
                 p.requires_grad = True
-            for p in net.cnn.parameters():
-                p.requires_grad = False
-            #for p in cnn_encoder.parameters():
-            #    p.requires_grad = True
-            #cnn_encoder.train()
-            #for p in rnn_decoder.parameters():
-            #    p.requires_grad = True
-            #rnn_decoder.train()
+            if epoch <= 2:
+                net.cnn.eval()
+                for p in net.cnn.parameters():
+                    p.requires_grad = False
+            else:
+                net.cnn.train()
+                for p in net.cnn.parameters():
+                    p.requires_grad = True
 
             cost = train_batch(net, train_iter, device, losses, optimizer)
             loss_avg.add(cost)

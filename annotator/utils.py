@@ -153,7 +153,7 @@ def look_up_single_round_state(time, states, identifier):
 
 def look_up_game_state(time, states):
     data = {}
-    for k in ['game', 'left', 'right']:
+    for k in ['game', 'spectator_mode', 'left', 'right']:
         ind = np.searchsorted(states['{}_array'.format(k)], time, side="right")
         if ind == len(states[k]):
             ind -= 1
@@ -265,10 +265,13 @@ class FileVideoStreamRange:
 
 
 class FileVideoStream:
-    def __init__(self, path, begin, end, time_step, queueSize=128, real_begin=None):
+    def __init__(self, path, begin, end, time_step, queueSize=128, short_time_steps=None, real_begin=None):
         # initialize the file video stream along with the boolean
         # used to indicate if the thread should be stopped or not
         self.stream = cv2.VideoCapture(path)
+        self.short_time_steps = short_time_steps
+        if self.short_time_steps is None:
+            self.short_time_steps = []
         self.fps = self.stream.get(cv2.CAP_PROP_FPS)
         self.stopped = False
         self.begin = begin
@@ -320,7 +323,14 @@ class FileVideoStream:
                 else:
                     beg = self.begin
                 self.Q.put((frame, round(time_point - beg, 1)))
-                time_point += self.time_step
+                ts = self.time_step
+                if self.short_time_steps:
+                    for interval in self.short_time_steps:
+                        if interval['begin'] <= time_point <= interval['end']:
+                            ts = 0.1
+                            break
+
+                time_point += ts
                 frame_ind += 1
                 if time_point >= self.end:
                     self.stop()

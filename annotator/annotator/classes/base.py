@@ -4,7 +4,13 @@ from annotator.config import BOX_PARAMETERS
 
 
 def filter_statuses(statuses, duration_threshold):
-    statuses = [x for x in statuses if x['end'] - x['begin'] > duration_threshold]
+    if duration_threshold != 0:  # Filter 0 intervals first
+        statuses = filter_statuses(statuses, 0)
+    statuses = [x for x in statuses if x['end'] - x['begin'] > 0]
+    if isinstance(duration_threshold, dict):
+        statuses = [x for x in statuses if x['end'] - x['begin'] >= duration_threshold[x['status']]]
+    else:
+        statuses = [x for x in statuses if x['end'] - x['begin'] >= duration_threshold]
     new_status = []
     for x in statuses:
         if not new_status:
@@ -25,9 +31,12 @@ class BaseAnnotator(object):
     identifier = ''
     box_settings = ''
 
-    def __init__(self, film_format, device):
+    def __init__(self, film_format, device, debug=False):
         self.device = device
+        self.debug = debug
         self.params = BOX_PARAMETERS[film_format][self.box_settings]
+        self.image_height = int(self.params['HEIGHT'] * self.resize_factor)
+        self.image_width = int(self.params['WIDTH'] * self.resize_factor)
         self.shape = (self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
                       int(self.params['WIDTH'] * self.resize_factor))
         self.to_predict = np.zeros(self.shape, dtype=np.uint8)
@@ -39,8 +48,10 @@ class BaseAnnotator(object):
         #    return
         box = frame[self.params['Y']: self.params['Y'] + self.params['HEIGHT'],
               self.params['X']: self.params['X'] + self.params['WIDTH']]
-        #cv2.imshow('frame', box)
-        #cv2.waitKey()
+        if self.debug:
+            cv2.imshow('frame', box)
+            cv2.waitKey()
+
         if self.resize_factor:
             box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
         box = np.transpose(box, axes=(2, 0, 1))
@@ -49,9 +60,12 @@ class BaseAnnotator(object):
 
         if self.process_index == self.batch_size:
             self.annotate()
-            self.to_predict = np.zeros(self.shape, dtype=np.uint8)
-            self.process_index = 0
-            self.begin_time += self.batch_size * self.time_step
+            self.reset(self.begin_time + (self.batch_size * self.time_step))
+
+    def reset(self, begin_time):
+        self.to_predict = np.zeros(self.shape, dtype=np.uint8)
+        self.process_index = 0
+        self.begin_time = begin_time
 
     def annotate(self):
         pass

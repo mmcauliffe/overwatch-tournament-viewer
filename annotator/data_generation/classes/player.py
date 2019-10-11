@@ -49,7 +49,10 @@ class PlayerStatusGenerator(DataGenerator):
         self.has_status = False
 
     def figure_slot_params(self, r):
-        film_format = r['game']['match']['event']['film_format']
+        if r['stream_vod']['film_format'] != 'O':
+            film_format = r['stream_vod']['film_format']
+        else:
+            film_format = r['game']['match']['event']['film_format']
         left_params = BOX_PARAMETERS[film_format]['LEFT']
         right_params = BOX_PARAMETERS[film_format]['RIGHT']
         self.slot_params = {}
@@ -230,7 +233,7 @@ class PlayerStatusGenerator(DataGenerator):
     def add_new_round_info(self, r):
         self.current_round_id = r['id']
         self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
+        if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
         self.get_data(r)

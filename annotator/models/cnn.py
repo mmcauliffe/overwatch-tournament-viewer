@@ -67,7 +67,7 @@ class StatusCNN(nn.Module):
         x = F.relu(self.fc2(x))
         x_outs = {}
         for k in self.sets.keys():
-            x_outs[k] = getattr(self,'{}_output'.format(k))(x)
+            x_outs[k] = F.log_softmax(getattr(self,'{}_output'.format(k))(x), dim=1)
         return x_outs
 
 
@@ -160,7 +160,7 @@ class MidCNN(nn.Module):
         #x = F.relu(self.fc2(x))
         x_outs = {}
         for k in self.sets.keys():
-            x_outs[k] = getattr(self,'{}_output'.format(k))(x)
+            x_outs[k] = F.log_softmax(getattr(self,'{}_output'.format(k))(x), dim=1)
         return x_outs
 
 class GameCNN(nn.Module):
@@ -214,7 +214,7 @@ class GameCNN(nn.Module):
         #x = F.relu(self.fc2(x))
         x_outs = {}
         for k in self.sets.keys():
-            x_outs[k] = getattr(self,'{}_output'.format(k))(x)
+            x_outs[k] = F.log_softmax(getattr(self,'{}_output'.format(k))(x), 1)
         return x_outs
 
 class PauseCNN(nn.Module):

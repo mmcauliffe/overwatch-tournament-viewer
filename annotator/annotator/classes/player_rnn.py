@@ -2,13 +2,13 @@ import os
 import torch
 import numpy as np
 from annotator.training.helper import load_set
-from annotator.models.lstm import StatusLSTM
+from annotator.models.rnn import StatusGRU
 from annotator.annotator.classes.player_status import PlayerStatusAnnotator
 from torch.autograd import Variable
 from annotator.training.ctc_helper import loadData
 
 
-class PlayerLSTMAnnotator(PlayerStatusAnnotator):
+class PlayerRNNAnnotator(PlayerStatusAnnotator):
     time_step = 0.1
     batch_size = 100
 
@@ -39,7 +39,7 @@ class PlayerLSTMAnnotator(PlayerStatusAnnotator):
         input_sets = {}
         for k, v in input_set_files.items():
             input_sets[k] = load_set(v)
-        self.model = StatusLSTM(sets, input_sets)
+        self.model = StatusGRU(sets, input_sets)
         self.model.load_state_dict(torch.load(os.path.join(model_directory, 'model.pth')))
         self.model.eval()
         for p in self.model.parameters():
@@ -80,9 +80,7 @@ class PlayerLSTMAnnotator(PlayerStatusAnnotator):
 
         if self.process_index == self.batch_size:
             self.annotate()
-            self.to_predict = np.zeros(self.shape, dtype=np.uint8)
-            self.process_index = 0
-            self.begin_time += self.batch_size * self.time_step
+            self.reset(self.begin_time + (self.batch_size * self.time_step))
 
     def annotate(self):
         import time

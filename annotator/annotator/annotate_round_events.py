@@ -8,14 +8,14 @@ import itertools
 import time
 from collections import defaultdict, Counter
 from annotator.annotator.classes import InGameAnnotator, MidAnnotator, PlayerNameAnnotator, PlayerStatusAnnotator, \
-    KillFeedAnnotator, ReplayAnnotator, PauseAnnotator, PlayerLSTMAnnotator
+    KillFeedAnnotator, ReplayAnnotator, PauseAnnotator, PlayerRNNAnnotator
 
 from annotator.utils import get_local_vod, \
     get_local_path,  FileVideoStream, Empty, get_vod_path
 from annotator.api_requests import get_annotate_vods_round_events, upload_annotated_round_events, get_team
 
 working_dir = r'E:\Data\Overwatch\models'
-player_lstm_dir = os.path.join(working_dir, 'player_lstm')
+player_rnn_dir = os.path.join(working_dir, 'player_rnn')
 player_model_dir = os.path.join(working_dir, 'player_status')
 player_ocr_model_dir = os.path.join(working_dir, 'player_ocr')
 kf_ctc_model_dir = os.path.join(working_dir, 'kill_feed_ctc')
@@ -34,8 +34,9 @@ spec_modes = {'O': 'Original',
         "L":"overwatch league",
               'C': 'Contenders'}
 
+use_status_rnn = False
 
-def predict_on_video(v, r, sequences):
+def predict_on_video(v, r):
     import time
     player_names = {}
     player_mapping = {}
@@ -55,22 +56,28 @@ def predict_on_video(v, r, sequences):
     left_color = r['game']['left_team']['color'].lower()
     right_color = r['game']['right_team']['color'].lower()
     spec = spec_modes[r['game']['match']['event']['spectator_mode']].lower()
-    film_format = r['game']['match']['event']['film_format']
-    use_lstm = False
-    if use_lstm:
-        status_annotator = PlayerLSTMAnnotator(film_format, player_lstm_dir, device, left_color, right_color, player_names, spectator_mode=spec)
+    if v['film_format'] != 'O':
+        film_format = v['film_format']
     else:
-        status_annotator = PlayerStatusAnnotator(film_format, player_model_dir, device, left_color, right_color, player_names, spectator_mode=spec)
-
+        film_format = r['game']['match']['event']['film_format']
+    print(film_format)
+    debug = False
+    if use_status_rnn:
+        status_annotator = PlayerRNNAnnotator(film_format, player_rnn_dir, device, left_color, right_color, player_names, spectator_mode=spec)
+    else:
+        status_annotator = PlayerStatusAnnotator(film_format, player_model_dir, device, left_color, right_color, player_names, spectator_mode=spec, debug=debug)
+    status_annotator.get_zooms(r)
     #name_annotator = PlayerNameAnnotator(v['film_format'], player_ocr_model_dir, device)
-    kill_feed_annotator = KillFeedAnnotator(film_format, kf_ctc_model_dir, kf_exists_model_dir, device, spectator_mode=spec)
-    mid_annotator = MidAnnotator(film_format, mid_model_dir, device)
-    for s in sequences:
+    kill_feed_annotator = KillFeedAnnotator(film_format, kf_ctc_model_dir, kf_exists_model_dir, device, spectator_mode=spec, debug=debug)
+    mid_annotator = MidAnnotator(film_format, mid_model_dir, device, debug=debug)
+    for s in r['sequences']:
         print(s)
         time_step = 0.1
-        fvs = FileVideoStream(get_vod_path(v), s['begin'] + r['begin'], s['end'] + r['begin'], time_step, real_begin=r['begin']).start()
+        fvs = FileVideoStream(get_vod_path(v), s[0] + r['begin'], s[1] + r['begin'], time_step, real_begin=r['begin']).start()
         time.sleep(5)
         frame_ind = 0
+        status_annotator.reset(s[0])
+        mid_annotator.reset(s[0])
         while True:
             try:
                 frame, time_point = fvs.read()
@@ -78,9 +85,8 @@ def predict_on_video(v, r, sequences):
                 break
             if time_point % (status_annotator.time_step * status_annotator.batch_size) == 0:
                 print(time_point)
-
             if time_step == status_annotator.time_step or frame_ind % (status_annotator.time_step / time_step) == 0:
-                status_annotator.process_frame(frame)
+                status_annotator.process_frame(frame, time_point)
             kill_feed_annotator.process_frame(frame, time_point)
             #name_annotator.process_frame(frame, time_point)
             mid_annotator.process_frame(frame, time_point)
@@ -88,7 +94,7 @@ def predict_on_video(v, r, sequences):
         status_annotator.annotate()
         #name_annotator.annotate()
         mid_annotator.annotate()
-    mid_statuses = mid_annotator.generate_round_properties()
+    mid_statuses = mid_annotator.generate_round_properties(r)
     #print(name_annotator.names)
     #statuses = status_annotator.generate_statuses()
     left_team, right_team = status_annotator.generate_teams()
@@ -178,20 +184,18 @@ def analyze_rounds(vods):
     for v in vods:
         print(v)
         for r in v['rounds']:
+            print(r)
             print(r['begin'], r['end'])
+            print(r['sequences'])
             #replays, pauses, smaller_windows, sequences = get_sequences(v, r)
             replays, pauses, smaller_windows = [], [], []
             #print('r', replays)
             #print('p', pauses)
             #print('s', sequences)
-            sequences = [{'begin': 0, 'end': r['end'] - r['begin']}]
             #sequences = [{'begin': 0, 'end': 60}] # FIXME
             #round_props = get_round_status(get_vod_path(v), r['begin'], r['end'], v['film_format'], sequences)
 
-            data = predict_on_video(v, r, sequences)
-            data['replays'] = replays
-            data['pauses'] = pauses
-            data['smaller_windows'] = smaller_windows
+            data = predict_on_video(v, r)
             data['round'] = r
             print(r)
             print(data)
@@ -210,10 +214,11 @@ def analyze_rounds(vods):
             data['round'] = r['id']
             print('DATA')
             print(data)
-            #error
-            print(upload_annotated_round_events(data))
-            error
 
+            resp = upload_annotated_round_events(data)
+            print(resp)
+            if not resp['success']:
+                error
 
 def vod_main():
     #test()

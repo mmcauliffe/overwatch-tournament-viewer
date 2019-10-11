@@ -154,7 +154,7 @@ BOX_PARAMETERS = {
     }
 }
 
-BOX_PARAMETERS['K'] = {
+BOX_PARAMETERS['KO'] = {
         'WINDOW': {
             'X': 0,
             'Y': 0,
@@ -272,6 +272,54 @@ BOX_PARAMETERS['W'] = {
         'WIDTH': PAUSE_WIDTH,
         'HEIGHT': PAUSE_HEIGHT,
     }
+}
+
+BOX_PARAMETERS['K'] = {
+        'WINDOW': {
+            'X': 0,
+            'Y': 0,
+            'HEIGHT': FRAME_HEIGHT,
+            'WIDTH': FRAME_WIDTH,
+        },
+    'MID': {
+        'X': 496,
+        'Y': 62,
+        'HEIGHT': MID_HEIGHT,
+        'WIDTH': MID_WIDTH,
+    },
+    'GAME': {
+        'X': 520,
+        'Y': 60,
+        'HEIGHT': 84,
+        'WIDTH': 240,
+},
+    'KILL_FEED': {
+        'X': 1280 - 20 - 248,
+        'Y': 145,
+        'WIDTH': 248,
+        'HEIGHT': 256
+    },
+    'KILL_FEED_SLOT': {
+        'X': 1280 - 20 - 248,
+        'Y': 145,
+        'WIDTH': 248,
+        'HEIGHT': 32,
+        'MARGIN': 4
+    },
+    'LEFT': {
+        'X': 31,
+        'Y': 77,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 7,
+    },
+    'RIGHT': {
+        'X': 834,
+        'Y': 77,
+        'WIDTH': 64,
+        'HEIGHT': 64,
+        'MARGIN': 7,
+    },
 }
 
 BOX_PARAMETERS['2'] = {

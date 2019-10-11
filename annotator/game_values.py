@@ -24,10 +24,10 @@ COLOR_SET = TRAIN_INFO['colors']
 
 SPECTATOR_MODES = TRAIN_INFO['spectator_modes']
 
-PLAYER_SET = get_player_list()
+FILM_FORMATS = TRAIN_INFO['film_formats']
 
 STATUS_SET = ['status'] + TRAIN_INFO['extra_statuses']
 
-PLAYER_CHARACTER_SET = get_character_set(PLAYER_SET)
+PLAYER_CHARACTER_SET = TRAIN_INFO['player_name_characters']
 
 MAP_MODE_SET = TRAIN_INFO['map_modes']

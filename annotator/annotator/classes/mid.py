@@ -13,8 +13,8 @@ class MidAnnotator(BaseAnnotator):
     identifier = 'mid'
     box_settings = 'MID'
 
-    def __init__(self, film_format, model_directory, device):
-        super(MidAnnotator, self).__init__(film_format, device)
+    def __init__(self, film_format, model_directory, device, debug=False):
+        super(MidAnnotator, self).__init__(film_format, device, debug)
         set_paths = {
             'overtime': os.path.join(model_directory, 'overtime_set.txt'),
             'point_status': os.path.join(model_directory, 'point_status_set.txt'),
@@ -38,10 +38,11 @@ class MidAnnotator(BaseAnnotator):
     def annotate(self):
         if self.process_index == 0:
             return
-        predicteds = self.model({'image': torch.from_numpy(self.to_predict).float().to(self.device)})
+        with torch.no_grad():
+            predicteds = self.model({'image': torch.from_numpy(self.to_predict[:self.process_index]).float().to(self.device)})
         for k, v in predicteds.items():
             _, predicteds[k] = torch.max(v.to('cpu'), 1)
-            for t_ind in range(self.batch_size):
+            for t_ind in range(self.process_index):
                 current_time = self.begin_time + (t_ind * self.time_step)
                 label = self.model.sets[k][predicteds[k][t_ind]]
                 if len(self.statuses[k]) == 0:
@@ -53,7 +54,7 @@ class MidAnnotator(BaseAnnotator):
                         self.statuses[k].append(
                             {'begin': current_time, 'end': current_time, 'status': label})
 
-    def generate_round_properties(self):
+    def generate_round_properties(self, round_object):
         overtimes = filter_statuses (self.statuses['overtime'], 2)
         point_status = filter_statuses(self.statuses['point_status'], 2)
         actual_overtime = []
@@ -98,6 +99,7 @@ class MidAnnotator(BaseAnnotator):
                         point_flips.append({'time_point': p['begin'], 'controlling_side': 'R'})
         else:
             for p in point_status:
+                print(p)
                 map_mode = out_props['map_mode'].title()
                 if map_mode == 'Assault':
                     points_per_round = 2
@@ -105,10 +107,17 @@ class MidAnnotator(BaseAnnotator):
                     points_per_round = 3
                 if p['status'].startswith(map_mode):
                     total = int(p['status'].replace(map_mode + '_', '')) - 1
+                    print(total)
                     if total:
-                        previous_points = points_per_round *  int(int(out_props['round_number']) / 2)
+                        if 'round_number' in round_object:
+                            previous_points = points_per_round * int((int(round_object['round_number']) - 1) / 2)
+                        else:
+                            previous_points = points_per_round * int((int(out_props['round_number']) - 1) / 2)
                         total += previous_points
-                        point_totals.append({'time_point': p['begin'], 'point_total': total})
+                        print(total)
+                        print(point_totals)
+                        if not point_totals or total > point_totals[-1]['point_total']:
+                            point_totals.append({'time_point': p['begin'], 'point_total': total})
         out_props['point_flips'] = point_flips
         out_props['point_gains'] = point_totals
 

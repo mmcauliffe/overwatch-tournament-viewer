@@ -47,7 +47,7 @@ class CTCDataGenerator(DataGenerator):
     def add_new_round_info(self, r):
         self.current_round_id = r['id']
         self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
-        if os.path.exists(self.hd5_path):
+        if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
         num_frames = 0

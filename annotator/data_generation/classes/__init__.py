@@ -4,8 +4,4 @@ from annotator.data_generation.classes.player import PlayerStatusGenerator
 from annotator.data_generation.classes.player_lstm import PlayerLSTMGenerator
 from annotator.data_generation.classes.player_name import PlayerOCRGenerator
 from annotator.data_generation.classes.ctc import CTCDataGenerator
-from annotator.data_generation.classes.replay import ReplayStatusGenerator
-from annotator.data_generation.classes.pause import PauseStatusGenerator
-from annotator.data_generation.classes.smaller_window import SmallerWindowStatusGenerator
-from annotator.data_generation.classes.zoomed_status_bars import ZoomedBarStatusGenerator
 from annotator.data_generation.classes.game import GameGenerator

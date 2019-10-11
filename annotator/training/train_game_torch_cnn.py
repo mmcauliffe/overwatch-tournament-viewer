@@ -1,12 +1,7 @@
 import os
 import torch
-import torchvision
-import torchvision.transforms as transforms
-import h5py
+import shutil
 import numpy as np
-import torch.utils.data as data
-import matplotlib.pyplot as plt
-from torch.autograd import Variable
 import torch.optim as optim
 import random
 from annotator.datasets.cnn_dataset import CNNDataset, BatchedCNNDataset, CNNHDF5Dataset
@@ -26,7 +21,7 @@ cuda = True
 seed = 1
 batch_size = 100
 test_batch_size = 100
-num_epochs = 10
+num_epochs = 3
 lr = 0.001 # learning rate for Critic, not used by adadealta
 momentum = 0.5
 beta1 = 0.5 # beta1 for adam. default=0.5
@@ -49,17 +44,24 @@ random.seed(manualSeed)
 np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
+model_path = os.path.join(working_dir, 'model.pth')
 
 if __name__ == '__main__':
 
     set_files = {
         'game': os.path.join(train_dir, 'game_set.txt'),
-        #'left': os.path.join(train_dir, 'left_set.txt'),
-        #'right': os.path.join(train_dir, 'right_set.txt'),
+        'map': os.path.join(train_dir, 'map_set.txt'),
+        #'film_format': os.path.join(train_dir, 'film_format_set.txt'),
+        'left_color': os.path.join(train_dir, 'left_color_set.txt'),
+        'right_color': os.path.join(train_dir, 'right_color_set.txt'),
+        'spectator_mode': os.path.join(train_dir, 'spectator_mode_set.txt'),
+        'left': os.path.join(train_dir, 'left_set.txt'),
+        'right': os.path.join(train_dir, 'right_set.txt'),
     }
 
     sets = {}
     for k, v in set_files.items():
+        shutil.copyfile(v, os.path.join(working_dir, '{}_set.txt'.format(k)))
         sets[k] = load_set(v)
 
     class_counts = {}
@@ -89,6 +91,11 @@ if __name__ == '__main__':
 
     net = GameCNN(sets)
     net.to(device)
+
+    if os.path.exists(model_path): # Initialize from CNN model
+        d = torch.load(model_path)
+        print(d)
+        net.load_state_dict(d, strict=False)
 
     print('WEIGHTS')
     for k, v in weights.items():

@@ -1,7 +1,10 @@
 import torch
 from torch.autograd import Variable
 import os
+import cv2
+import numpy as np
 from annotator.training.helper import Averager
+
 
 def loadData(v, data):
     v.resize_(data.size()).copy_(data)
@@ -33,6 +36,7 @@ def train_batch(net, train_iter, device, criterion, optimizer,image, spectator_m
     optimizer.step()
     return cost
 
+
 def val(net, val_loader, device, criterion, working_dir, best_val_loss, converter, image, spectator_modes, text, length, use_batched_dataset=False):
     print('Start val')
     n_test_disp = 10
@@ -46,38 +50,39 @@ def val(net, val_loader, device, criterion, working_dir, best_val_loss, converte
     i = 0
     n_correct = 0
     loss_avg = Averager()
+    with torch.no_grad():
+        for index in range(len(val_loader)):
+            data = val_iter.next()
 
-    for index in range(len(val_loader)):
-        data = val_iter.next()
+            inputs, outputs = data
+            cpu_images = inputs['image'][0]
+            cpu_specs = inputs['spectator_mode'][0]
+            cpu_texts = outputs['the_labels'][0]
+            cpu_lengths = outputs['label_length'][0]
+            cpu_rounds = inputs['round'][0]
 
-        inputs, outputs = data
-        cpu_images = inputs['image'][0]
-        cpu_specs = inputs['spectator_mode'][0]
-        cpu_texts = outputs['the_labels'][0]
-        cpu_lengths = outputs['label_length'][0]
+            batch_size = cpu_images.size(0)
+            if not batch_size:
+                continue
+            loadData(image, cpu_images)
+            loadData(spectator_modes, cpu_specs)
+            loadData(text, cpu_texts)
+            loadData(length, cpu_lengths)
 
-        batch_size = cpu_images.size(0)
-        if not batch_size:
-            continue
-        loadData(image, cpu_images)
-        loadData(spectator_modes, cpu_specs)
-        loadData(text, cpu_texts)
-        loadData(length, cpu_lengths)
+            preds = net(image, spectator_modes)
+            preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
 
-        preds = net(image, spectator_modes)
-        preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+            cost = criterion(preds, text, preds_size, length) / batch_size
+            loss_avg.add(cost)
 
-        cost = criterion(preds, text, preds_size, length) / batch_size
-        loss_avg.add(cost)
-
-        _, preds = preds.max(2)
-        preds = preds.transpose(1, 0).contiguous().view(-1)
-        preds = preds.to('cpu')
-        sim_preds = converter.decode(preds.data, preds_size.data, raw=False)
-        cpu_texts_decode = converter.decode(cpu_texts, cpu_lengths, raw=False)
-        for pred, target in zip(sim_preds, cpu_texts_decode):
-            if pred == target:
-                n_correct += 1
+            _, preds = preds.max(2)
+            preds = preds.transpose(1, 0).contiguous().view(-1)
+            preds = preds.to('cpu')
+            sim_preds = converter.decode(preds.data, preds_size.data, raw=False)
+            cpu_texts_decode = converter.decode(cpu_texts, cpu_lengths, raw=True)
+            for i, (pred, target) in enumerate(zip(sim_preds, cpu_texts_decode)):
+                if pred == target:
+                    n_correct += 1
 
     raw_preds = converter.decode(preds.data, preds_size.data, raw=True)[:n_test_disp]
     for raw_pred, pred, gt in zip(raw_preds, sim_preds, cpu_texts_decode):

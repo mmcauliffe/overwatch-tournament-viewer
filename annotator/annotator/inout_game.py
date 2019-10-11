@@ -53,6 +53,12 @@ def extract_info(v):
             info['event'] = main
             if sub is not None:
                 info['event'] += ' - ' + sub
+    elif channel.lower() == 'overwatch contenders':
+        pattern = r'''(?P<team_one>[-\w .']+) (vs|V) (?P<team_two>[-\w .']+) \(Part.*'''
+        m = re.match(pattern, v['title'])
+        if m is not None:
+            info['team_one'] = m.group('team_one')
+            info['team_two'] = m.group('team_two')
     elif channel.lower() == 'overwatchleague':
         pattern = r'Game (\d+) (\w+) @ (\w+) \| ([\w ]+)'
         m = re.match(pattern, v['title'])
@@ -76,7 +82,12 @@ def extract_info(v):
         if m is not None:
             info['team_one'] = m.group('team_one')
             info['team_two'] = m.group('team_two')
-
+    elif channel.lower() == 'rivalcade':
+        pattern = r'''.*, (?P<team_one>[-\w '?]+) (vs[.]?|VS) (?P<team_two>[-\w '?]+)'''
+        m = re.match(pattern, v['title'])
+        if m is not None:
+            info['team_one'] = m.group('team_one')
+            info['team_two'] = m.group('team_two')
     return info
 
 
@@ -92,7 +103,7 @@ def annotate_game_or_not(v):
             break
         game_annotator.process_frame(frame, time_point)
     game_annotator.annotate()
-    return game_annotator.status
+    return game_annotator.generate_rounds()
 
 
 def annotate_names(v, data):
@@ -146,65 +157,132 @@ def annotate_statuses(v, data):
         error
 
 
-def annotate_properties(v, data):
-    import time
-    round_level = ['map', 'round_number', 'attacking_side']
-    game_level = ['spectator_mode', 'map_mode']
-    for r in data['rounds']:
-        print('begin', time.strftime('%H:%M:%S', time.gmtime(r['begin'])))
-        print('end', time.strftime('%H:%M:%S', time.gmtime(r['end'])))
-        mid_annotator = MidAnnotator(v['film_format'], mid_model_dir, device)
-        fvs = FileVideoStream(get_vod_path(v), r['begin'], r['end'], 10, real_begin=r['begin']).start()
-        time.sleep(5)
-        print('begin mid processing')
-        while True:
-            try:
-                frame, time_point = fvs.read()
-            except Empty:
-                break
-            mid_annotator.process_frame(frame, time_point)
-        mid_annotator.annotate()
-        statuses = mid_annotator.statuses
-        ends = {}
-        for k in round_level:
-            counter = defaultdict(float)
-            for i in statuses[k]:
-                counter[i['status']] += i['end'] - i['begin']
-            print(counter)
-            ends[k] = max(counter.keys(), key=lambda x: counter[x])
+def extract_properties(v, r, spectator_mode):
+    round_level = ['round_number', 'attacking_side']
+    game_level = ['map', 'spectator_mode', 'map_mode']
+    print('begin', time.strftime('%H:%M:%S', time.gmtime(r['begin'])))
+    print('end', time.strftime('%H:%M:%S', time.gmtime(r['end'])))
+    film_format = v['film_format']
+    mid_annotator = MidAnnotator(film_format, mid_model_dir, device)
+    mid_annotator.time_step = 1
+    name_annotator = PlayerNameAnnotator(film_format, player_ocr_model_dir, device, spectator_mode,debug=False)
+    name_annotator.time_step = 1
+    fvs = FileVideoStream(get_vod_path(v), r['begin'], r['begin'] + 60, mid_annotator.time_step, real_begin=r['begin']).start()
+    time.sleep(5)
+    print('begin mid processing')
+    while True:
+        try:
+            frame, time_point = fvs.read()
+        except Empty:
+            break
+        mid_annotator.process_frame(frame, time_point)
+        name_annotator.process_frame(frame, time_point)
+    mid_annotator.annotate()
+    statuses = mid_annotator.generate_round_properties(r)
+    name_annotator.annotate()
+    names = name_annotator.generate_names()
+    r['mid_map'] = statuses['map']
+    r['map_mode'] = statuses['map_mode']
+    r['round_number'] = statuses['round_number']
+    r['attacking_side'] = statuses['attacking_side']
+    r['players'] = names
+    return r
 
+def annotate_properties(v, rounds, spectator_mode):
+    import time
+    for i, r in enumerate(rounds):
+        rounds[i] = extract_properties(v, r, spectator_mode)
+        print(r)
+    #data['map'] = max(m, key=lambda x: m[x])
+    return rounds
+
+def print_round_data(r):
+    print('-------------')
+    print('Round number {}'.format(r['round_number']))
+    begin_timestamp = time.strftime('%H:%M:%S', time.gmtime(r['begin']))
+    end_timestamp = time.strftime('%H:%M:%S', time.gmtime(r['end']))
+    print('Begin: {}, {}'.format(begin_timestamp, r['begin']))
+    print('End: {}, {}'.format(end_timestamp, r['end']))
+    print('Left team: {}'.format(', '.join(r['players']['left'].values())))
+    print('Right team: {}'.format(', '.join(r['players']['right'].values())))
+    print('Pauses: {}'. format(', '.join(time.strftime('%M:%S', time.gmtime(x['begin']))+'-'+time.strftime('%M:%S', time.gmtime(x['end'])) for x in r['pauses'])))
+    print('Replays: {}'. format(', '.join(time.strftime('%M:%S', time.gmtime(x['begin']))+'-'+time.strftime('%M:%S', time.gmtime(x['end'])) for x in r['replays'])))
+    print('Smaller windows: {}'. format(', '.join(time.strftime('%M:%S', time.gmtime(x['begin']))+'-'+time.strftime('%M:%S', time.gmtime(x['end'])) for x in r['smaller_windows'])))
+
+def print_game_data(data):
+    print('-------------')
+    if 'games' in data:
+        print('Multiple games')
+        print('Found {} games'.format(len(data['games'])))
+        print('-------------')
+        for g in data['games']:
+            print('Game {}'.format(g['game_number']))
+            print('Map: {}'.format(g['map']))
+            print('Left color: {}'.format(g['left_color']))
+            print('Right color: {}'.format(g['right_color']))
+            for r in g['rounds']:
+                print_round_data(r)
+    else:
+        print('Just one game')
+        print('Found {} rounds'.format(len(data['rounds'])))
+        for r in data['rounds']:
+            print_round_data(r)
 
 def analyze_ingames(vods):
     game_dir = os.path.join(oi_annotation_dir, 'to_check')
     os.makedirs(game_dir, exist_ok=True)
     for v in vods:
+        print(v)
         info= extract_info(v)
+        print(info)
         if not info:
             continue
-        data = {'vod_id': v['id'], 'rounds': [], 'team_one': info['team_one'].lower(), 'team_two': info['team_two'].lower()}
+        data = {'vod_id': v['id'], 'team_one': info['team_one'].lower(), 'team_two': info['team_two'].lower()}
         if v['type'] == 'G' and 'game_number' in info:
             data['game_number'] = int(info['game_number'])
+            data['rounds'] = []
+        elif v['type'] == 'M':
+            data['games'] = []
         print(data)
-        game_status = annotate_game_or_not(v)
-        print(game_status)
-        for interval in game_status:
-            begin_timestamp = time.strftime('%H:%M:%S', time.gmtime(interval['begin']))
-            end_timestamp = time.strftime('%H:%M:%S', time.gmtime(interval['end']))
-            print('      ', '{}-{}: {}'.format(begin_timestamp, end_timestamp, interval['status']))
-        game_status = filter_statuses(game_status, 20)
+        g_data, rounds = annotate_game_or_not(v)
+        data.update(g_data)
 
-        for g in game_status:
-            if g['status'] == 'game':
-                begin_timestamp = time.strftime('%H:%M:%S', time.gmtime(g['begin']))
-                end_timestamp = time.strftime('%H:%M:%S', time.gmtime(g['end']))
-                print('GAME      ', '{}-{}: {}'.format(begin_timestamp, end_timestamp, g['status']))
-                data['rounds'].append({'begin': g['begin'], 'end': g['end']})
-        #annotate_properties(v, data)
+        annotate_properties(v, rounds, data['spectator_mode'])
+        for i, r in enumerate(rounds):
+            begin_timestamp = time.strftime('%H:%M:%S', time.gmtime(r['begin']))
+            end_timestamp = time.strftime('%H:%M:%S', time.gmtime(r['end']))
+            print('ROUND: {}-{}'.format(begin_timestamp, end_timestamp))
+            for k in r.keys():
+                if k in ['begin', 'end']:
+                    continue
+                if isinstance(r[k], list):
+                    print(k)
+                    for interval in r[k]:
+                        begin_timestamp = time.strftime('%H:%M:%S', time.gmtime(interval['begin']))
+                        end_timestamp = time.strftime('%H:%M:%S', time.gmtime(interval['end']))
+                        print('{}-{}'.format(begin_timestamp, end_timestamp))
+                else:
+                    print(k, r[k])
+        if v['type'] == 'G':
+            data['rounds'] = rounds
+        elif v['type'] == 'M':
+            data['games'].append({'game_number': 1, 'rounds': [], 'left_color': data['left_color'], 'right_color': data['right_color']})
+            for i, r in enumerate(rounds):
+
+                if data['games'][-1]['rounds'] and (int(r['round_number']) == 1 or r['map'] != data['games'][-1]['rounds'][-1]['map']):
+                    data['games'].append({'game_number': data['games'][-1]['game_number'] + 1, 'map': r['map'],
+                                          'rounds': [r], 'left_color': data['left_color'], 'right_color': data['right_color']})
+                else:
+                    data['games'][-1]['rounds'].append(r)
+                    data['games'][-1]['map'] = r['map']
         print(data)
         #error
+        print_game_data(data)
         #annotate_names(v, data)
         #annotate_statuses(v, data)
+
         print(upload_annotated_in_out_game(data))
+        error
 
 
 def vod_main():
@@ -215,7 +293,6 @@ def vod_main():
         local_path = get_vod_path(v)
         if not os.path.exists(local_path):
             get_local_vod(v)
-
     analyze_ingames(vods)
 
 

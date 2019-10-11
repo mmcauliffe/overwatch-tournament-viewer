@@ -56,47 +56,47 @@ def val(net, val_loader, device, losses, working_dir, best_val_loss, use_batched
     for k in corrects.keys():
         label_corrects[k] = list(0. for i in range(len(net.sets[k])))
         label_totals[k] = list(0. for i in range(len(net.sets[k])))
+    with torch.no_grad():
+        for index in range(len(val_loader)):
+            data = val_iter.next()
 
-    for index in range(len(val_loader)):
-        data = val_iter.next()
-
-        inputs, labels = data
-        if use_batched_dataset:
-            for k, v in inputs.items():
-                inputs[k] = v[0].float().to(device)
-            for k, v in labels.items():
-                labels[k] = v[0].long().to(device)
-        else:
-            for k, v in inputs.items():
-                inputs[k] = v.float().to(device)
-            for k, v in labels.items():
-                labels[k] = v.long().to(device)
-
-        predicteds = net(inputs)
-
-        loss = None
-
-        for k, v in predicteds.items():
-            if loss is None:
-                loss = losses[k](v, labels[k])
+            inputs, labels = data
+            if use_batched_dataset:
+                for k, v in inputs.items():
+                    inputs[k] = v[0].float().to(device)
+                for k, v in labels.items():
+                    labels[k] = v[0].long().to(device)
             else:
-                loss += losses[k](v, labels[k])
-        loss_avg.add(loss)
-        for k, v in predicteds.items():
-            _, predicteds[k] = torch.max(v, 1)
-            corrects[k] += (predicteds[k] == labels[k]).sum().item()
-            c = (predicteds[k] == labels[k]).squeeze().to('cpu')
-            if c.shape:
-                for i in range(c.shape[0]):
-                    label = labels[k][i]
-                    label_corrects[k][label] += c[i].item()
+                for k, v in inputs.items():
+                    inputs[k] = v.float().to(device)
+                for k, v in labels.items():
+                    labels[k] = v.long().to(device)
+
+            predicteds = net(inputs)
+
+            loss = None
+
+            for k, v in predicteds.items():
+                if loss is None:
+                    loss = losses[k](v, labels[k])
+                else:
+                    loss += losses[k](v, labels[k])
+            loss_avg.add(loss)
+            for k, v in predicteds.items():
+                _, predicteds[k] = torch.max(v, 1)
+                corrects[k] += (predicteds[k] == labels[k]).sum().item()
+                c = (predicteds[k] == labels[k]).squeeze().to('cpu')
+                if c.shape:
+                    for i in range(c.shape[0]):
+                        label = labels[k][i]
+                        label_corrects[k][label] += c[i].item()
+                        label_totals[k][label] += 1
+                else:
+                    label = labels[k][0]
+                    label_corrects[k][label] += c.item()
                     label_totals[k][label] += 1
-            else:
-                label = labels[k][0]
-                label_corrects[k][label] += c.item()
-                label_totals[k][label] += 1
 
-        total += inputs['image'].size(0)
+            total += inputs['image'].size(0)
     print('Val loss: {}'.format(loss_avg.val()))
     for k, v in corrects.items():
         print('%s accuracy of the network on the %d test images: %d %%' % (k, total,
