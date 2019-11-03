@@ -11,8 +11,9 @@ def load_set(path):
             ts.append(line.strip())
     return ts
 
-def load_data(v, data):
-    v.resize_(data.size()).copy_(data)
+def loadData(v, data):
+    with torch.no_grad():
+        v.resize_(data.size()).copy_(data)
 
 
 class Averager(object):

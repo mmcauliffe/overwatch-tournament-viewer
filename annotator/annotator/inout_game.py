@@ -39,6 +39,7 @@ def extract_info(v):
                    'ATL': 'Atlanta Reign', 'GZC': 'Guangzhou Charge'}
     channel = v['channel']['name']
     info = {}
+    v['title'] = v['title'].strip()
     if channel.lower() in ['overwatchcontenders', 'overwatchcontendersbr']:
         pattern = r'''(?P<team_one>[-\w ']+) (vs|V) (?P<team_two>[-\w ']+) \| (?P<desc>[\w ]+) Game (?P<game_num>\d) \| ((?P<sub>[\w :]+) \| )?(?P<main>[\w ]+)'''
         m = re.match(pattern, v['title'])
@@ -238,6 +239,8 @@ def analyze_ingames(vods):
         if not info:
             continue
         data = {'vod_id': v['id'], 'team_one': info['team_one'].lower(), 'team_two': info['team_two'].lower()}
+        if data['team_one'] == 'gen g esports':
+            data['team_one'] = 'gen.g esports'
         if v['type'] == 'G' and 'game_number' in info:
             data['game_number'] = int(info['game_number'])
             data['rounds'] = []
@@ -265,6 +268,10 @@ def analyze_ingames(vods):
                     print(k, r[k])
         if v['type'] == 'G':
             data['rounds'] = rounds
+            m = Counter()
+            for r in rounds:
+                m[r['map']] += 1
+            data['map'] = max(m.keys(), key=lambda x: m[x])
         elif v['type'] == 'M':
             data['games'].append({'game_number': 1, 'rounds': [], 'left_color': data['left_color'], 'right_color': data['right_color']})
             for i, r in enumerate(rounds):
@@ -276,13 +283,16 @@ def analyze_ingames(vods):
                     data['games'][-1]['rounds'].append(r)
                     data['games'][-1]['map'] = r['map']
         print(data)
-        #error
         print_game_data(data)
+        #error
         #annotate_names(v, data)
         #annotate_statuses(v, data)
-
-        print(upload_annotated_in_out_game(data))
-        error
+        res = upload_annotated_in_out_game(data)
+        print(v)
+        print(res)
+        if not res['success']:
+            error
+        #error
 
 
 def vod_main():
@@ -293,6 +303,7 @@ def vod_main():
         local_path = get_vod_path(v)
         if not os.path.exists(local_path):
             get_local_vod(v)
+
     analyze_ingames(vods)
 
 

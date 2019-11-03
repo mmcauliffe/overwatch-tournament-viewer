@@ -97,7 +97,7 @@ def get_kill_feed_info():
     r = requests.get(url)
     resp = r.json()
     for n in resp:
-        abilities = n['damaging_abilities'] + n['reviving_abilities'] + n['denying_abilities']
+        abilities = n['abilities']
         ability_mapping[n['name'].lower()] = [x['name'].lower() for x in abilities]
     return {'deniable_ults': deniable_ults, 'npc_set': npcs, 'npc_mapping': npc_mapping,
             'ability_mapping': ability_mapping, 'denying_abilities': denying_abilities}
@@ -221,6 +221,18 @@ def get_game_states(vod_id):
         data['{}_array'.format(k)] = np.array([x['end'] for x in data[k]])
     return data
 
+
+def get_matches(event_id):
+    url = config.api_url + 'events/{}/matches/'.format(event_id)
+    r = requests.get(url)
+    data = r.json()
+    return data
+
+def get_match_stats(match_id):
+    url = config.api_url + 'matches/{}/stats/'.format(match_id)
+    r = requests.get(url)
+    data = r.json()
+    return data
 
 def get_kf_events(round_id):
     url = config.api_url + 'rounds/{}/kill_feed_items/'.format(round_id)

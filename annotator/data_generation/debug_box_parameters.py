@@ -15,37 +15,38 @@ from annotator.config import BOX_PARAMETERS
 from annotator.data_generation.classes import PlayerStatusGenerator, PlayerOCRGenerator, KillFeedCTCGenerator, \
     MidStatusGenerator
 
-ROUND = 9960
+ROUND = 9395
 
-ROUND_TIME = 0
+ROUND_TIME = (0 * 60) + 55.3
 
 
 def display_round(r):
     import time as timepackage
-    #generators = [PlayerStatusGenerator(), KillFeedCTCGenerator(), MidStatusGenerator()]
-    generators = [PlayerStatusGenerator(), PlayerOCRGenerator()]
+    generators = [PlayerStatusGenerator(), PlayerOCRGenerator(), KillFeedCTCGenerator(), MidStatusGenerator()]
     print(r)
     print(r['spectator_mode'])
+    print(r['stream_vod']['film_format'])
     begin_time = timepackage.time()
     for g in generators:
         g.get_data(r)
         g.figure_slot_params(r)
     time_step = min(x.time_step for x in generators)
+    time_step = 0.1
     for beg, end in r['sequences']:
         print(beg, end)
         fvs = FileVideoStream(get_vod_path(r['stream_vod']), r['begin'] + ROUND_TIME, end + r['begin'], time_step,
                               real_begin=r['begin']).start()
-        timepackage.sleep(1.0)
+        timepackage.sleep(1)
         frame_ind = 0
-        num_frames = int((end - beg) / time_step)
         while True:
             try:
                 frame, time_point = fvs.read()
             except Empty:
                 break
-            cv2.imshow('frame', frame)
-            for i, g in enumerate(generators):
-                g.display_current_frame(frame, time_point)
+            print('READ', time_point)
+            cv2.imshow('frame_{}'.format(time_point), frame)
+            #for i, g in enumerate(generators):
+            #    g.display_current_frame(frame, time_point)
             frame_ind += 1
             cv2.waitKey()
 

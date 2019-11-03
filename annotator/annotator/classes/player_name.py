@@ -89,7 +89,9 @@ class PlayerNameAnnotator(BaseAnnotator):
         if self.process_index == 0:
             return
         for s in self.slot_params.keys():
-            loadData(self.images, torch.from_numpy(self.to_predict[s][:self.process_index, ...]).float())
+            t = torch.from_numpy(self.to_predict[s][:self.process_index, ...]).float()
+            t = ((t / 255) - 0.5) / 0.5
+            loadData(self.images, t)
             batch_size = self.images.size(0)
             with torch.no_grad():
                 preds = self.model(self.images, self.spectator_mode_input[:self.process_index])
@@ -111,16 +113,18 @@ class PlayerNameAnnotator(BaseAnnotator):
             print(s)
             print(v)
             output_names[s[0]][s[1]] = max(v, key=lambda x: v[x])
-        output_names['left'][0] = 'glister'
-        output_names['left'][1] = 'stalk3r'
-        output_names['left'][2] = 'oberon'
-        output_names['left'][3] = 'woohyal'
-        output_names['left'][4] = 'creative'
-        output_names['left'][5] = 'bliss'
-        output_names['right'][0] = 'kami'
-        output_names['right'][1] = 'mer1t'
-        output_names['right'][2] = 'jmac'
-        output_names['right'][3] = 'sven'
-        output_names['right'][4] = 'molly'
-        output_names['right'][5] = 'lensa'
+        if output_names['left'][0] == 'hooeg':
+            output_names['left'][0] = 'hooreg'
+        #output_names['left'][0] = 'zachareee'
+        #output_names['left'][1] = 'bqb'
+        #output_names['left'][2] = 'jiqiren'
+        #output_names['left'][3] = 'lateyoung'
+        #output_names['left'][4] = 'kris'
+        #output_names['left'][5] = 'closer'
+        #output_names['right'][0] = 'stitch'
+        #output_names['right'][1] = 'bqb'
+        #output_names['right'][2] = 'sharyk'
+        #output_names['right'][3] = 'trill'
+        #output_names['right'][4] = 'kris'
+        #output_names['right'][5] = 'rapel'
         return output_names

@@ -14,7 +14,7 @@ from annotator.utils import look_up_player_state
 class PlayerOCRGenerator(CTCDataGenerator):
     identifier = 'player_ocr'
     num_slots = 12
-    time_step = 5
+    time_step = 6
     num_variations = 1
     usable_annotations = ['M', 'O']
 
@@ -75,15 +75,15 @@ class PlayerOCRGenerator(CTCDataGenerator):
                     #cv2.imshow('gray_{}'.format(s), gray)
                     #cv2.imshow('bw_{}'.format(s), bw)
                 box = np.transpose(box, axes=(2, 0, 1))
-                self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
+                self.data["{}_img".format(pre)][index, ...] = box[None]
 
                 #self.train_mean += box / self.hdf5_file['train_img'].shape[0]
                 sequence_length = len(sequence)
-                self.hdf5_file['{}_spectator_mode_label'.format(pre)][index] = SPECTATOR_MODES.index(self.spec_mode)
+                self.data['{}_spectator_mode_label'.format(pre)][index] = SPECTATOR_MODES.index(self.spec_mode)
                 if sequence:
-                    self.hdf5_file["{}_label_sequence_length".format(pre)][index] = sequence_length
-                    self.hdf5_file["{}_label_sequence".format(pre)][index, 0:len(sequence)] = sequence
-                    self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
+                    self.data["{}_label_sequence_length".format(pre)][index] = sequence_length
+                    self.data["{}_label_sequence".format(pre)][index, 0:len(sequence)] = sequence
+                    self.data["{}_round".format(pre)][index] = self.current_round_id
                 self.process_index += 1
         #cv2.waitKey(0)
 
@@ -116,7 +116,8 @@ class PlayerOCRGenerator(CTCDataGenerator):
             self.num_train,3, int(self.image_height * self.resize_factor * 2), int(self.image_width * self.resize_factor))
         val_shape = (
             self.num_val, 3,  int(self.image_height * self.resize_factor *  2), int(self.image_width * self.resize_factor))
-        self.hdf5_file = h5py.File(self.hd5_path, mode='w')
+
+        self.data = {}
         for pre in ['train', 'val']:
             if pre == 'train':
                 shape = train_shape
@@ -124,12 +125,14 @@ class PlayerOCRGenerator(CTCDataGenerator):
             else:
                 shape = val_shape
                 count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8)
-            self.hdf5_file.create_dataset("{}_label_sequence".format(pre), (count, self.max_sequence_length),
-                                          np.int16, fillvalue=len(self.label_set))
-            self.hdf5_file.create_dataset("{}_label_sequence_length".format(pre), (count,), np.uint8, fillvalue=1)
-            self.hdf5_file.create_dataset("{}_spectator_mode_label".format(pre), (count,), np.uint8)
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16)
+            self.data["{}_img".format(pre)] = np.zeros(shape, dtype=np.uint8)
+            self.data["{}_round".format(pre)] = np.zeros((count,), dtype=np.int16)
+            self.data["{}_time_point".format(pre)] = np.zeros((count,), dtype=np.float)
+            self.data["{}_spectator_mode_label".format(pre)] = np.zeros( (count,), dtype=np.uint8)
+            self.data["{}_label_sequence".format(pre)] = np.zeros((count, self.max_sequence_length),
+                                          dtype=np.int16)
+            self.data["{}_label_sequence".format(pre)][:, :] = len(self.label_set)
+            self.data["{}_label_sequence_length".format(pre)] = np.ones((count,), dtype=np.uint8)
 
         self.process_index = 0
         self.states = get_player_states(r['id'])
@@ -144,10 +147,7 @@ class PlayerOCRGenerator(CTCDataGenerator):
                 self.colors[slot] = self.right_color
 
     def figure_slot_params(self, r):
-        if r['stream_vod']['film_format'] != 'O':
-            film_format = r['stream_vod']['film_format']
-        else:
-            film_format = r['game']['match']['event']['film_format']
+        film_format = r['stream_vod']['film_format']
         left_params = BOX_PARAMETERS[film_format]['LEFT_NAME']
         right_params = BOX_PARAMETERS[film_format]['RIGHT_NAME']
         self.slot_params = {}

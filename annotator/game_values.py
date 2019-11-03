@@ -8,6 +8,7 @@ def get_character_set(player_set):
         chars.update(p)
     return sorted(chars)
 
+
 TRAIN_INFO = get_train_info()
 
 MAP_SET = TRAIN_INFO['maps']

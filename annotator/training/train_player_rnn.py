@@ -99,7 +99,7 @@ if __name__ == '__main__':
 
     losses = {}
     for k in sets.keys():
-        losses[k] = nn.CrossEntropyLoss(weight=weights[k])
+        losses[k] = nn.NLLLoss(weight=weights[k])
         losses[k].to(device)
 
     if use_adam:
@@ -126,7 +126,7 @@ if __name__ == '__main__':
             net.train()
             for p in net.parameters():
                 p.requires_grad = True
-            if epoch <= 2:
+            if load_CNN_pretrained and epoch <= 2:
                 net.cnn.eval()
                 for p in net.cnn.parameters():
                     p.requires_grad = False

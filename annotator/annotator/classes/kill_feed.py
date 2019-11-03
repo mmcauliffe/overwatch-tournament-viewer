@@ -129,6 +129,7 @@ class KillFeedAnnotator(BaseAnnotator):
         images = None
         show = self.debug
         spectator_modes = []
+        first_empty = False
         for s, params in self.slot_params.items():
 
             x = params['x']
@@ -149,8 +150,11 @@ class KillFeedAnnotator(BaseAnnotator):
 
             _, predicteds['exist'] = torch.max(predicteds['exist'], 1)
             label = self.exists_model.sets['exist'][predicteds['exist'][0]]
-            if label == 'empty':
+            if label == 'empty' and s == 0:
+                continue
+            elif label == 'empty':
                 break
+            image = ((image / 255) - 0.5) / 0.5
             if images is None:
                 images = image
             else:
@@ -189,7 +193,6 @@ class KillFeedAnnotator(BaseAnnotator):
             cur_kf[s] = self.convert_kf_ctc_output(d, show=show)
         if cur_kf and show:
             print(cur_kf)
-            cv2.waitKey()
         if cur_kf:
             self.kill_feed.append({'time_point': time_point, 'slots': cur_kf})
         #print('kf ctc decode', time.time()-b)
@@ -217,7 +220,7 @@ class KillFeedAnnotator(BaseAnnotator):
             elif i not in ABILITY_SET:
                 second_intervals.append(i)
         for i in first_intervals:
-            if i in COLOR_SET:
+            if i in COLOR_SET + ['nonwhite']:
                 data['first_color'] = i
             elif i in HERO_SET:
                 data['first_hero'] = i
@@ -233,7 +236,7 @@ class KillFeedAnnotator(BaseAnnotator):
                 data['headshot'] = False
         for i in second_intervals:
             i = i.replace('_assist', '')
-            if i in COLOR_SET:
+            if i in COLOR_SET + ['nonwhite']:
                 data['second_color'] = i
             elif i.endswith('_npc'):
                 data['second_hero'] = i.replace('_npc', '')
@@ -295,8 +298,7 @@ class KillFeedAnnotator(BaseAnnotator):
                 else:
                     if e['ability'] != 'primary':
                         continue
-                if e['second_color'] not in [left_color, right_color]:
-                    continue
+                e['second_color'] = convert_colors(e['second_color'], left_color, right_color)
                 if e['second_color'] == left_color:
                     dying_team = left_team
                 elif e['second_color'] == right_color:
@@ -321,7 +323,7 @@ class KillFeedAnnotator(BaseAnnotator):
                             break
                 if add_new:
                     possible_events.append({'time_point': k['time_point'], 'duration': 0, 'event': e})
-
+        #print(possible_events)
         better_possible_events = []
         for i, p in enumerate(possible_events):
             for j, p2 in enumerate(better_possible_events):
@@ -393,6 +395,8 @@ class KillFeedAnnotator(BaseAnnotator):
             if e['event']['second_hero'] in npc_set or \
                     (e['event']['second_hero'] in deniable_ults and e['event']['ability'] in denying_abilities):
                 for ne in npc_events:
+                    if ne['duration'] < 1:
+                        continue
                     if close_events(ne['event'], e['event']):
                         if e['time_point'] + e['duration'] < ne['time_point'] + 7.3 and ne['duration'] < 7.5:
                             ne['duration'] = e['time_point'] + e['duration'] - ne['time_point']
@@ -403,7 +407,7 @@ class KillFeedAnnotator(BaseAnnotator):
                         continue
                     npc_events.append(e)
                     integrity_check.add(integ)
-        npc_events = [x for x in npc_events if x['duration'] > 3]
+        npc_events = [x for x in npc_events if x['duration'] > 2]
         print('NPC DEATHS')
         print(npc_events)
         self.mech_deaths = []
@@ -423,4 +427,5 @@ class KillFeedAnnotator(BaseAnnotator):
                 actual_events.append(e)
                 integrity_check.add(integ)
                 #print(time.strftime('%M:%S', time.gmtime(e['time_point'])), e)
+
         return sorted(actual_events, key=lambda x: x['time_point'])

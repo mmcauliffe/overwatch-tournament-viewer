@@ -1,4 +1,6 @@
 
+BASE_TIME_STEP = 0.3
+
 local_directory = r'E:\Data\Overwatch\raw_data\annotations\matches'
 vod_directory = r'E:\Data\Overwatch\raw_data\vods'
 training_data_directory = r'E:\Data\Overwatch\training_data'
@@ -154,7 +156,7 @@ BOX_PARAMETERS = {
     }
 }
 
-BOX_PARAMETERS['KO'] = {
+BOX_PARAMETERS['1'] = {
         'WINDOW': {
             'X': 0,
             'Y': 0,
@@ -301,24 +303,24 @@ BOX_PARAMETERS['K'] = {
     },
     'KILL_FEED_SLOT': {
         'X': 1280 - 20 - 248,
-        'Y': 145,
+        'Y': 143,
         'WIDTH': 248,
         'HEIGHT': 32,
-        'MARGIN': 4
+        'MARGIN': 2
     },
     'LEFT': {
-        'X': 31,
-        'Y': 77,
+        'X': 34,
+        'Y': 73,
         'WIDTH': 64,
         'HEIGHT': 64,
         'MARGIN': 7,
     },
     'RIGHT': {
         'X': 834,
-        'Y': 77,
+        'Y': 73,
         'WIDTH': 64,
         'HEIGHT': 64,
-        'MARGIN': 7,
+        'MARGIN': 6,
     },
 }
 

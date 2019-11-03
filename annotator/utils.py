@@ -25,6 +25,7 @@ def get_local_file(r):
 def get_local_vod(v):
     directory = config.vod_directory
     out_template = '{}.%(ext)s'.format(v['id'])
+    print('DOWNLOADING', v)
     subprocess.call(['youtube-dl', '-F', v['url'], ], cwd=directory)
     for f in ['720p', '720p60' '720p30', '22', 'best']:
         subprocess.call(['youtube-dl', v['url'], '-o', out_template, '-f', f], cwd=directory)
@@ -264,22 +265,35 @@ class FileVideoStreamRange:
         return self.Q.qsize() > 0
 
 
-class FileVideoStream:
-    def __init__(self, path, begin, end, time_step, queueSize=128, short_time_steps=None, real_begin=None):
+class FileVideoStream(object):
+    def __init__(self, path, begin, end, time_step, queueSize=100, short_time_steps=None, real_begin=None):
         # initialize the file video stream along with the boolean
         # used to indicate if the thread should be stopped or not
+        print(path)
         self.stream = cv2.VideoCapture(path)
         self.short_time_steps = short_time_steps
         if self.short_time_steps is None:
             self.short_time_steps = []
-        self.fps = self.stream.get(cv2.CAP_PROP_FPS)
+        self.fps = round(self.stream.get(cv2.CAP_PROP_FPS), 2)
         self.stopped = False
-        self.begin = begin
+        self.begin = round(begin, 1)
         self.end = end
+        self.frame_shift = 0
+        self.ms_shift = 53
+        for p in ['2288', '2287']:
+            if p in path:
+                self.frame_shift = 10
+                self.ms_shift = 400
+                break
         if self.end == 0:
             self.end = int(self.stream.get(cv2.CAP_PROP_FRAME_COUNT) / self.fps) - 5
+        self.stream.set(cv2.CAP_PROP_POS_AVI_RATIO, 1)
+        print('DURATION', self.stream.get(cv2.CAP_PROP_POS_MSEC))
         self.time_step = time_step
         self.real_begin = real_begin
+        if self.real_begin is not None:
+            self.real_begin = round(real_begin, 1)
+
 
         # initialize the queue used to store frames read from
         # the video file
@@ -305,11 +319,15 @@ class FileVideoStream:
             # otherwise, ensure the queue has room in it
             if not self.Q.full():
                 # read the next frame from the file
-                frame_number = int(round(time_point * self.fps))
+                time_point = round(time_point, 1)
+                #print(self.begin, time_point)
+                frame_number = int(time_point * self.fps)
+                frame_number -= self.frame_shift
                 if frame_number >= self.stream.get(cv2.CAP_PROP_FRAME_COUNT):
                     self.stop()
                     return
-                self.stream.set(1, frame_number)
+                #self.stream.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                self.stream.set(cv2.CAP_PROP_POS_MSEC, int(time_point*1000)-self.ms_shift)
                 (grabbed, frame) = self.stream.read()
                 # if the `grabbed` boolean is `False`, then we have
                 # reached the end of the video file

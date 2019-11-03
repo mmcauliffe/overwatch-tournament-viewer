@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 from annotator.data_generation.classes.player import PlayerStatusGenerator
-from annotator.config import na_lab, sides, BOX_PARAMETERS
+from annotator.config import na_lab, sides, BOX_PARAMETERS, BASE_TIME_STEP
 from annotator.utils import look_up_player_state
 from annotator.api_requests import get_player_states
 from annotator.game_values import HERO_SET, COLOR_SET, STATUS_SET, SPECTATOR_MODES
@@ -15,7 +15,7 @@ class PlayerLSTMGenerator(PlayerStatusGenerator):
     identifier = 'player_lstm'
     num_slots = 12
     num_variations = 1
-    time_step = 0.1
+    time_step = BASE_TIME_STEP
     frames_per_seq = 100
     num_train_slots = 10
     num_val_slots = 2

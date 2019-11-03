@@ -3,14 +3,7 @@ import cv2
 from annotator.config import BOX_PARAMETERS
 
 
-def filter_statuses(statuses, duration_threshold):
-    if duration_threshold != 0:  # Filter 0 intervals first
-        statuses = filter_statuses(statuses, 0)
-    statuses = [x for x in statuses if x['end'] - x['begin'] > 0]
-    if isinstance(duration_threshold, dict):
-        statuses = [x for x in statuses if x['end'] - x['begin'] >= duration_threshold[x['status']]]
-    else:
-        statuses = [x for x in statuses if x['end'] - x['begin'] >= duration_threshold]
+def coalesce_statuses(statuses):
     new_status = []
     for x in statuses:
         if not new_status:
@@ -22,6 +15,16 @@ def filter_statuses(statuses, duration_threshold):
                 new_status.append(x)
     new_status[0]['begin'] = 0
     return new_status
+
+
+def filter_statuses(statuses, duration_threshold):
+    if duration_threshold != 0:  # Filter 0 intervals first
+        statuses = filter_statuses(statuses, 0)
+    if isinstance(duration_threshold, dict):
+        statuses = [x for x in statuses if x['status'] not in duration_threshold or round(x['end'] - x['begin'], 1) >= duration_threshold[x['status']]]
+    else:
+        statuses = [x for x in statuses if round(x['end'] - x['begin'], 1) >= duration_threshold]
+    return coalesce_statuses(statuses)
 
 
 class BaseAnnotator(object):
@@ -49,8 +52,7 @@ class BaseAnnotator(object):
         box = frame[self.params['Y']: self.params['Y'] + self.params['HEIGHT'],
               self.params['X']: self.params['X'] + self.params['WIDTH']]
         if self.debug:
-            cv2.imshow('frame', box)
-            cv2.waitKey()
+            cv2.imshow('frame_' + self.identifier, box)
 
         if self.resize_factor:
             box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)

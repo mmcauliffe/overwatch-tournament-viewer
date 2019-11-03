@@ -5,7 +5,7 @@ import h5py
 import random
 import cv2
 import shutil
-from annotator.config import BOX_PARAMETERS
+from annotator.config import BOX_PARAMETERS, BASE_TIME_STEP
 from annotator.game_values import SPECTATOR_MODES
 from annotator.utils import get_local_file, \
     get_local_path,  FileVideoStream, Empty, get_vod_path
@@ -56,7 +56,8 @@ def generate_data(rounds):
                 process_round = True
         if not process_round:
             continue
-        time_step = min(x.minimum_time_step for x in generators if x.generate_data)
+        time_steps = [int(x.time_step * 10) for x in generators if x.generate_data]
+        time_step = round(np.gcd.reduce(time_steps) / 10, 1)
         for beg, end in r['sequences']:
             print(beg, end)
             fvs = FileVideoStream(get_vod_path(r['stream_vod']), beg + r['begin'], end + r['begin'], time_step,
@@ -73,7 +74,7 @@ def generate_data(rounds):
                     begin = timepackage.time()
                     if time_step == g.time_step:
                         g.process_frame(frame, time_point, frame_ind)
-                    elif frame_ind % (g.minimum_time_step / time_step) == 0:
+                    elif frame_ind % (g.time_step / time_step) == 0:
                         g.process_frame(frame, time_point, frame_ind)
                     average_times[i] += (timepackage.time()-begin)/100
 
@@ -141,10 +142,6 @@ def generate_data_for_game_cnn(vods):
             g.cleanup_round()
         print('Finished in {} seconds!'.format(timepackage.time() - begin_time))
 
-def generate_data_for_cnn(rounds, vods):
-    # rounds = rounds[:2]
-    #generate_data(rounds)
-    generate_data_for_game_cnn(vods)
 
 
 def save_round_info(rounds):
@@ -215,6 +212,8 @@ if __name__ == '__main__':
                 get_local_file(r)
     save_round_info(rounds)
     # rounds = get_example_rounds()
-    generate_data_for_cnn(rounds, vods)
+
+    generate_data(rounds)
+    #generate_data_for_game_cnn(vods)
 
 

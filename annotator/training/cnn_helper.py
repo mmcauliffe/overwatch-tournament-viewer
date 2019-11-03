@@ -3,23 +3,17 @@ import os
 from annotator.training.helper import Averager
 
 
-def train_batch(net, train_iter, device, losses, optimizer, use_batched_dataset=False):
+def train_batch(net, train_iter, device, losses, optimizer):
     #import time
     #begin = time.time()
     data = train_iter.next()
     #print('Data loading took', time.time()-begin)
 
     inputs, labels = data
-    if use_batched_dataset:
-        for k, v in inputs.items():
-            inputs[k] = v[0].to(device)
-        for k, v in labels.items():
-            labels[k] = v[0].long().to(device)
-    else:
-        for k, v in inputs.items():
-            inputs[k] = v.float().to(device)
-        for k, v in labels.items():
-            labels[k] = v.long().to(device)
+    for k, v in inputs.items():
+        inputs[k] = v[0].to(device)
+    for k, v in labels.items():
+        labels[k] = v[0].long().to(device)
 
     optimizer.zero_grad()
     predicteds = net(inputs)
@@ -36,7 +30,7 @@ def train_batch(net, train_iter, device, losses, optimizer, use_batched_dataset=
     return loss
 
 
-def val(net, val_loader, device, losses, working_dir, best_val_loss, use_batched_dataset=False):
+def val(net, val_loader, device, losses, working_dir, best_val_loss, fine_tune=False):
     print('Start val')
 
     for p in net.parameters():
@@ -61,16 +55,10 @@ def val(net, val_loader, device, losses, working_dir, best_val_loss, use_batched
             data = val_iter.next()
 
             inputs, labels = data
-            if use_batched_dataset:
-                for k, v in inputs.items():
-                    inputs[k] = v[0].float().to(device)
-                for k, v in labels.items():
-                    labels[k] = v[0].long().to(device)
-            else:
-                for k, v in inputs.items():
-                    inputs[k] = v.float().to(device)
-                for k, v in labels.items():
-                    labels[k] = v.long().to(device)
+            for k, v in inputs.items():
+                inputs[k] = v[0].float().to(device)
+            for k, v in labels.items():
+                labels[k] = v[0].long().to(device)
 
             predicteds = net(inputs)
 
@@ -102,9 +90,13 @@ def val(net, val_loader, device, losses, working_dir, best_val_loss, use_batched
         print('%s accuracy of the network on the %d test images: %d %%' % (k, total,
             100 * corrects[k] / total))
 
-    if loss_avg.val() < best_val_loss:
+    if loss_avg.val() < best_val_loss and not fine_tune:
         print('Saving new best model!')
         torch.save(net.state_dict(), os.path.join(working_dir, 'model.pth'))
+        best_val_loss = loss_avg.val()
+    elif loss_avg.val() < best_val_loss and fine_tune:
+        print('Saving new best model!')
+        torch.save(net.state_dict(), os.path.join(working_dir, 'model_fine_tuned.pth'))
         best_val_loss = loss_avg.val()
 
     assessment_file = os.path.join(working_dir, 'accuracy.txt')

@@ -48,6 +48,7 @@ class StatusCNN(nn.Module):
             setattr(self, '{}_input'.format(k), nn.Embedding(len(v), 100))
             input_length += 100
         self.fc2 = nn.Linear(256 + input_length, self.CNN_embed_dim)
+        self.drop_p = 0.3
         for k, v in self.sets.items():
             setattr(self, '{}_output'.format(k), nn.Linear(self.CNN_embed_dim, len(v)))
 
@@ -59,12 +60,14 @@ class StatusCNN(nn.Module):
         # conv features
         x = self.cnn(x)
         x = x.view(-1, 512*3*3)
-
+        x = F.dropout(x, p=self.drop_p, training=self.training)
         x = F.relu(self.fc1(x))
         for k, v in inputs.items():
             extra_input = getattr(self,'{}_input'.format(k))(v.to(torch.int64))
             x = torch.cat((x, extra_input), 1)
+        x = F.dropout(x, p=self.drop_p, training=self.training)
         x = F.relu(self.fc2(x))
+        x = F.dropout(x, p=self.drop_p, training=self.training)
         x_outs = {}
         for k in self.sets.keys():
             x_outs[k] = F.log_softmax(getattr(self,'{}_output'.format(k))(x), dim=1)

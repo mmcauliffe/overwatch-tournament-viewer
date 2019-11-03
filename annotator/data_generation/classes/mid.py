@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 from annotator.data_generation.classes.base import DataGenerator
-from annotator.config import na_lab, BOX_PARAMETERS
+from annotator.config import na_lab, BOX_PARAMETERS, BASE_TIME_STEP
 from annotator.utils import look_up_round_state
 from annotator.api_requests import get_round_states
 from annotator.game_values import COLOR_SET, MAP_SET, MAP_MODE_SET, SPECTATOR_MODES
@@ -15,7 +15,7 @@ class MidStatusGenerator(DataGenerator):
     identifier = 'mid'
     resize_factor = 0.5
     num_variations = 4
-    time_step = 1
+    time_step = round(BASE_TIME_STEP * 5, 1)
 
     def __init__(self, debug=False):
         super(MidStatusGenerator, self).__init__(debug=debug)
@@ -39,10 +39,7 @@ class MidStatusGenerator(DataGenerator):
         self.save_set_info()
 
     def figure_slot_params(self, r):
-        if r['stream_vod']['film_format'] != 'O':
-            film_format = r['stream_vod']['film_format']
-        else:
-            film_format = r['game']['match']['event']['film_format']
+        film_format = r['stream_vod']['film_format']
         params = BOX_PARAMETERS[film_format]['MID']
         self.slot_params = {}
         self.slot_params[1] = {'x': params['X'], 'y': params['Y']}

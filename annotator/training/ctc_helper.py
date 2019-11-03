@@ -7,13 +7,20 @@ from annotator.training.helper import Averager
 
 
 def loadData(v, data):
-    v.resize_(data.size()).copy_(data)
+    with torch.no_grad():
+        v.resize_(data.size()).copy_(data)
 
 
-def train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length, use_batched_dataset=False):
+def train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length):
     data = train_iter.next()
 
-    inputs, outputs = data
+    d = data
+    inputs = d[0]
+    outputs = d[1]
+    use_weights = False
+    if len(d) > 2:
+        use_weights = True
+        weights = d[2][0].to(device)
     cpu_images = inputs['image'][0]
     cpu_specs = inputs['spectator_mode'][0]
     cpu_texts = outputs['the_labels'][0]
@@ -26,18 +33,21 @@ def train_batch(net, train_iter, device, criterion, optimizer,image, spectator_m
     loadData(text, cpu_texts)
     loadData(length, cpu_lengths)
 
+
     optimizer.zero_grad()
     preds = net(image, spectator_modes)
-    preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+    preds_size = Variable(torch.LongTensor([preds.size(0)] * batch_size))
 
-    cost = criterion(preds, text, preds_size, length) / batch_size
+    cost = criterion(preds, text, preds_size, length)
+    if use_weights:
+        cost = (cost * weights / weights.sum()).sum()
     # net.zero_grad()
     cost.backward()
     optimizer.step()
     return cost
 
 
-def val(net, val_loader, device, criterion, working_dir, best_val_loss, converter, image, spectator_modes, text, length, use_batched_dataset=False):
+def val(net, val_loader, device, criterion, working_dir, best_val_loss, converter, image, spectator_modes, text, length):
     print('Start val')
     n_test_disp = 10
     for p in net.parameters():
@@ -54,7 +64,9 @@ def val(net, val_loader, device, criterion, working_dir, best_val_loss, converte
         for index in range(len(val_loader)):
             data = val_iter.next()
 
-            inputs, outputs = data
+            d = data
+            inputs = d[0]
+            outputs = d[1]
             cpu_images = inputs['image'][0]
             cpu_specs = inputs['spectator_mode'][0]
             cpu_texts = outputs['the_labels'][0]
@@ -70,7 +82,7 @@ def val(net, val_loader, device, criterion, working_dir, best_val_loss, converte
             loadData(length, cpu_lengths)
 
             preds = net(image, spectator_modes)
-            preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+            preds_size = Variable(torch.LongTensor([preds.size(0)] * batch_size))
 
             cost = criterion(preds, text, preds_size, length) / batch_size
             loss_avg.add(cost)

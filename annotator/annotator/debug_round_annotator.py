@@ -36,6 +36,10 @@ spec_modes = {'O': 'Original',
 
 use_status_rnn = False
 
+ROUND = 9397
+
+skip_time = (0 * 60) + 16.5
+
 def predict_on_video(v, r):
     import time
     player_names = {}
@@ -58,7 +62,7 @@ def predict_on_video(v, r):
     spec = spec_modes[r['game']['match']['event']['spectator_mode']].lower()
     film_format = v['film_format']
     print(film_format)
-    debug = False
+    debug = True
     if use_status_rnn:
         status_annotator = PlayerRNNAnnotator(film_format, player_rnn_dir, device, left_color, right_color, player_names, spectator_mode=spec)
     else:
@@ -70,7 +74,7 @@ def predict_on_video(v, r):
     for s in r['sequences']:
         print(s)
         time_step = 0.1
-        fvs = FileVideoStream(get_vod_path(v), s[0] + r['begin'], s[1] + r['begin'], time_step, real_begin=r['begin']).start()
+        fvs = FileVideoStream(get_vod_path(v), r['begin'] + skip_time, s[1] + r['begin'], time_step, real_begin=r['begin']).start()
         time.sleep(5)
         frame_ind = 0
         status_annotator.reset(s[0])
@@ -80,6 +84,11 @@ def predict_on_video(v, r):
                 frame, time_point = fvs.read()
             except Empty:
                 break
+            if time_point < skip_time:
+                continue
+            if debug:
+                print(time_point, r['begin']+time_point)
+                cv2.imshow('frame', frame)
             if time_point % (status_annotator.time_step * status_annotator.batch_size) == 0:
                 print(time_point)
             if time_step == status_annotator.time_step or frame_ind % (status_annotator.time_step / time_step) == 0:
@@ -87,6 +96,9 @@ def predict_on_video(v, r):
             kill_feed_annotator.process_frame(frame, time_point)
             #name_annotator.process_frame(frame, time_point)
             mid_annotator.process_frame(frame, time_point)
+            if debug:
+                print(time_point)
+                cv2.waitKey()
             frame_ind += 1
         status_annotator.annotate()
         #name_annotator.annotate()
@@ -177,25 +189,23 @@ def get_sequences(v, r):
 
 def analyze_rounds(vods):
     import random
-    #random.seed(1234)
     game_dir = os.path.join(oi_annotation_dir, 'to_check')
     annotation_dir = os.path.join(oi_annotation_dir, 'annotations')
-    random.shuffle(vods)
-    for i, v in enumerate(vods):
-        print(i, v)
-        random.shuffle(v['rounds'])
+    #random.shuffle(vods)
+    for v in vods:
+        print(v)
+        #random.shuffle(v['rounds'])
         for r in v['rounds']:
-            #if r['id'] != 10411:
-            #    continue
+            if r['id'] != ROUND:
+                continue
             print(r)
             print(r['begin'], r['end'])
             print(r['sequences'])
             #replays, pauses, smaller_windows, sequences = get_sequences(v, r)
-            replays, pauses, smaller_windows = [], [], []
             #print('r', replays)
             #print('p', pauses)
             #print('s', sequences)
-            #r['sequences'] = [(100, 120)] # FIXME
+            #sequences = [{'begin': 0, 'end': 60}] # FIXME
             #round_props = get_round_status(get_vod_path(v), r['begin'], r['end'], v['film_format'], sequences)
 
             data = predict_on_video(v, r)
@@ -217,14 +227,7 @@ def analyze_rounds(vods):
             data['round'] = r['id']
             print('DATA')
             print(data)
-            #error
-            resp = upload_annotated_round_events(data)
 
-            print(resp)
-            if not resp['success']:
-                error
-            error
-            #break
 
 def vod_main():
     #test()

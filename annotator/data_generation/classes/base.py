@@ -3,13 +3,13 @@ import cv2
 import numpy as np
 import random
 import h5py
-from annotator.config import training_data_directory
+from annotator.config import training_data_directory, BASE_TIME_STEP
 
 
 class DataGenerator(object):
     identifier = ''
     num_variations = 1
-    time_step = 0.1
+    time_step = BASE_TIME_STEP
     num_slots = 1
     resize_factor = 1
     usable_annotations = ['M']
@@ -46,10 +46,6 @@ class DataGenerator(object):
                     for line in f:
                         s.append(line.strip())
                 assert s == self.sets[k][len(s)]
-
-    @property
-    def minimum_time_step(self):
-        return self.time_step
 
     def display_current_frame(self, frame, time_point):
         for slot in self.slots:
@@ -108,15 +104,12 @@ class DataGenerator(object):
                     box = cv2.resize(box, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
 
                 box = np.transpose(box, axes=(2, 0, 1))
-                self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
-                self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
-
-                self.hdf5_file["{}_time_point".format(pre)][index] = time_point
+                self.data["{}_img".format(pre)][index, ...] = box[None]
+                self.data["{}_round".format(pre)][index] = self.current_round_id
+                self.data["{}_time_point".format(pre)][index] = time_point
 
                 for k, s in self.sets.items():
-                    self.hdf5_file["{}_{}_label".format(pre, k)][index] = s.index(d[k])
-
-
+                    self.data["{}_{}_label".format(pre, k)][index] = s.index(d[k])
 
                 self.process_index += 1
                 if self.debug:
@@ -128,10 +121,13 @@ class DataGenerator(object):
     def cleanup_round(self):
         if not self.generate_data:
             return
+        with h5py.File(self.hd5_path, mode='w') as hdf5_file:
+            for k, v in self.data.items():
+                hdf5_file.create_dataset(k, v.shape, v.dtype)
+                hdf5_file[k][:] = v[:]
         with open(self.rounds_analyzed_path, 'w') as f:
             for r in self.analyzed_rounds:
                 f.write('{}\n'.format(r))
-        self.hdf5_file.close()
 
     def add_new_round_info(self, r):
         self.current_round_id = r['id']
@@ -159,8 +155,8 @@ class DataGenerator(object):
         print(self.image_height, int(self.image_height *self.resize_factor))
         train_shape = (self.num_train, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
         val_shape = (self.num_val, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
-        self.hdf5_file = h5py.File(self.hd5_path, mode='w')
 
+        self.data = {}
         for pre in ['train', 'val']:
             if pre == 'train':
                 shape = train_shape
@@ -168,11 +164,10 @@ class DataGenerator(object):
             else:
                 shape = val_shape
                 count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
-                                          maxshape=(None, shape[1], shape[2], shape[3]))
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
-            self.hdf5_file.create_dataset("{}_time_point".format(pre), (count,), np.float, maxshape=(None,))
+            self.data["{}_img".format(pre)] = np.zeros(shape, dtype=np.uint8)
+            self.data["{}_round".format(pre)] = np.zeros((count,), dtype=np.int16)
+            self.data["{}_time_point".format(pre)] = np.zeros((count,), dtype=np.float)
             for k, s in self.sets.items():
-                self.hdf5_file.create_dataset("{}_{}_label".format(pre, k), (count,), np.uint8, maxshape=(None,))
+                self.data["{}_{}_label".format(pre, k)] =  np.zeros((count,), dtype=np.uint8)
 
         self.process_index = 0

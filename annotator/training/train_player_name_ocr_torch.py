@@ -30,9 +30,10 @@ train_dir = r'E:\Data\Overwatch\training_data\player_ocr'
 
 cuda = True
 seed = 1
-batch_size = 100
-test_batch_size = 100
-num_epochs = 10
+batch_size = 200
+test_batch_size = 600
+num_epochs = 20
+early_stopping_threshold = 2
 lr = 0.001 # learning rate for Critic, not used by adadealta
 beta1 = 0.5 # beta1 for adam. default=0.5
 use_adam = True # whether to use adam (default is rmsprop)
@@ -48,14 +49,29 @@ n_test_disp = 10
 display_interval = 100
 manualSeed = 1234 # reproduce experiemnt
 random_sample = True
-use_batched_dataset = True
-use_hdf5 = True
 
 random.seed(manualSeed)
 np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
 
+def load_checkpoint(model, optimizer, filename='checkpoint'):
+    # Note: Input model & optimizer should be pre-defined.  This routine only updates their states.
+    start_epoch = 0
+    best_val_loss = np.inf
+    if os.path.isfile(filename):
+        print("=> loading checkpoint '{}'".format(filename))
+        checkpoint = torch.load(filename)
+        start_epoch = checkpoint['epoch']
+        best_val_loss = checkpoint.get('best_val_loss', np.inf)
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(filename, checkpoint['epoch']))
+    else:
+        print("=> no checkpoint found at '{}'".format(filename))
+
+    return model, optimizer, start_epoch, best_val_loss
 
 ### TRAINING
 
@@ -78,6 +94,7 @@ if __name__ == '__main__':
 
     train_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='train')
     test_set = CTCHDF5Dataset(train_dir, batch_size, blank_ind, pre='val')
+    train_set.generate_sample_weights(label_set)
     #weights = train_set.generate_class_weights(mu=10)
     print(len(train_set))
 
@@ -100,7 +117,7 @@ if __name__ == '__main__':
 
     # -------------------------------------------------------------------------------------------------
     converter = LabelConverter(label_set)
-    criterion = CTCLoss()
+    criterion = CTCLoss(reduction='none')
 
     image = torch.FloatTensor(batch_size, 3, image_height, image_width)
     spectator_modes = torch.IntTensor(batch_size)
@@ -111,6 +128,7 @@ if __name__ == '__main__':
         image = image.cuda()
         spectator_modes = spectator_modes.cuda()
         criterion = criterion.cuda()
+        #text = text.cuda()
     image = Variable(image)
     spectator_modes = Variable(spectator_modes)
     text = Variable(text)
@@ -127,18 +145,17 @@ if __name__ == '__main__':
     else:
         optimizer = optim.RMSprop(net.parameters(), lr=lr)
     import time
-    if use_batched_dataset:
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=1, num_workers=num_workers,
-                                                  shuffle=True)
-        val_loader = torch.utils.data.DataLoader(test_set, batch_size=1,
-                                                  shuffle=True, num_workers=num_workers)
-    else:
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=num_workers,
-                                                  shuffle=True)
-        val_loader = torch.utils.data.DataLoader(test_set, batch_size=test_batch_size,
-                                                  shuffle=True, num_workers=num_workers)
+
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=1, num_workers=num_workers,
+                                              shuffle=True)
+    val_loader = torch.utils.data.DataLoader(test_set, batch_size=1,
+                                              shuffle=True, num_workers=num_workers)
     print(len(train_loader), 'batches')
-    best_val_loss = np.inf
+
+    check_point_path = os.path.join(working_dir, 'checkpoint.pth')
+    net, optimizer, start_epoch, best_val_loss = load_checkpoint(net, optimizer, check_point_path)
+
+    last_improvement = 0
     for epoch in range(num_epochs):
         print('Epoch', epoch)
         begin = time.time()
@@ -149,7 +166,7 @@ if __name__ == '__main__':
                 p.requires_grad = True
             net.train()
 
-            cost = train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length, use_batched_dataset=use_batched_dataset)
+            cost = train_batch(net, train_iter, device, criterion, optimizer,image, spectator_modes, text, length)
             i += 1
             if cost is None:
                 continue
@@ -160,10 +177,17 @@ if __name__ == '__main__':
                       (epoch, num_epochs, i, len(train_loader), loss_avg.val()))
                 loss_avg.reset()
 
-        best_val_loss = val(net, val_loader, device, criterion, working_dir, best_val_loss, converter,image, spectator_modes, text, length,
-                                    use_batched_dataset=use_batched_dataset)
+        prev_best = best_val_loss
+        best_val_loss = val(net, val_loader, device, criterion, working_dir, best_val_loss, converter,image, spectator_modes, text, length)
+        if best_val_loss < prev_best:
+            last_improvement = epoch
 
         # do checkpointing
-        torch.save(net.state_dict(), os.path.join(working_dir, 'netCRNN_{}.pth'.format(epoch)))
+        state = {'epoch': epoch + 1, 'state_dict': net.state_dict(),
+                 'optimizer': optimizer.state_dict(), 'best_val_loss': best_val_loss}
+        torch.save(state, check_point_path)
         print('Time per epoch: {} seconds'.format(time.time()-begin))
+        if epoch - last_improvement == early_stopping_threshold:
+            print('Stopping training, val loss hasn\'t improved in {} iterations.'.format(early_stopping_threshold))
+            break
     print('Completed training, best val loss was: {}'.format(best_val_loss))

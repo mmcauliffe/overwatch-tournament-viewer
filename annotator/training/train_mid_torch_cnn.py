@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from torch.autograd import Variable
 import torch.optim as optim
 import random
-from annotator.datasets.cnn_dataset import CNNDataset, BatchedCNNDataset, CNNHDF5Dataset
+from annotator.datasets.cnn_dataset import CNNHDF5Dataset
 from annotator.datasets.helper import randomSequentialSampler
 import torch.nn as nn
 from annotator.training.cnn_helper import train_batch, val
@@ -24,9 +24,10 @@ train_dir = r'E:\Data\Overwatch\training_data\mid'
 
 cuda = True
 seed = 1
-batch_size = 100
-test_batch_size = 100
-num_epochs = 10
+batch_size = 200
+test_batch_size = 400
+num_epochs = 20
+early_stopping_threshold = 2
 lr = 0.001 # learning rate for Critic, not used by adadealta
 momentum = 0.5
 beta1 = 0.5 # beta1 for adam. default=0.5
@@ -70,23 +71,10 @@ if __name__ == '__main__':
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
 
-    if use_hdf5:
-        train_set = CNNHDF5Dataset(train_dir, sets=sets, batch_size=batch_size, pre='train')
-        test_set = CNNHDF5Dataset(train_dir, sets=sets, batch_size=test_batch_size, pre='val')
-        weights = train_set.generate_class_weights(mu=10)
-        print(len(train_set))
-    else:
-        if use_batched_dataset:
-                train_set = BatchedCNNDataset(root=os.path.join(train_dir, 'training_set'), sets=sets, batch_size=batch_size)
-                test_set = BatchedCNNDataset(root=os.path.join(train_dir, 'val_set'), sets=sets, batch_size=test_batch_size)
-        else:
-            train_set = CNNDataset(root=os.path.join(train_dir, 'training_set'), sets=sets)
-            if not random_sample:
-                sampler = randomSequentialSampler(train_set, batch_size)
-            else:
-                sampler = None
-            test_set = CNNDataset(root=os.path.join(train_dir, 'val_set'), sets=sets)
-        weights = train_set.generate_class_weights(mu=10, train_directory=train_dir)
+    train_set = CNNHDF5Dataset(train_dir, sets=sets, batch_size=batch_size, pre='train')
+    test_set = CNNHDF5Dataset(train_dir, sets=sets, batch_size=test_batch_size, pre='val')
+    weights = train_set.generate_class_weights(mu=10)
+    print(len(train_set))
 
     net = MidCNN(sets)
     if os.path.exists(model_path): # Initialize from CNN model
@@ -115,18 +103,13 @@ if __name__ == '__main__':
     # loss averager
     loss_avg = Averager()
     import time
-    if use_batched_dataset:
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=1, num_workers=num_workers,
-                                                  shuffle=True)
-        val_loader = torch.utils.data.DataLoader(test_set, batch_size=1,
-                                                  shuffle=True, num_workers=num_workers)
-    else:
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=num_workers,
-                                                  shuffle=True)
-        val_loader = torch.utils.data.DataLoader(test_set, batch_size=test_batch_size,
-                                                  shuffle=True, num_workers=num_workers)
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=1, num_workers=num_workers,
+                                              shuffle=True)
+    val_loader = torch.utils.data.DataLoader(test_set, batch_size=1,
+                                              shuffle=True, num_workers=num_workers)
     print(len(train_loader), 'batches')
     best_val_loss = np.inf
+    last_improvement = 0
     for epoch in range(num_epochs):
         print('Epoch', epoch)
         begin = time.time()
@@ -137,7 +120,7 @@ if __name__ == '__main__':
                 p.requires_grad = True
             net.train()
 
-            cost = train_batch(net, train_iter, device, losses, optimizer, use_batched_dataset=use_batched_dataset)
+            cost = train_batch(net, train_iter, device, losses, optimizer)
             loss_avg.add(cost)
             i += 1
             if i % display_interval == 0:
@@ -145,11 +128,16 @@ if __name__ == '__main__':
                       (epoch, num_epochs, i, len(train_loader), loss_avg.val()))
                 loss_avg.reset()
 
-        best_val_loss = val(net, val_loader, device, losses, working_dir, best_val_loss,
-                            use_batched_dataset=use_batched_dataset)
+        prev_best = best_val_loss
+        best_val_loss = val(net, val_loader, device, losses, working_dir, best_val_loss)
+        if best_val_loss < prev_best:
+            last_improvement = epoch
 
         # do checkpointing
         torch.save(net.state_dict(), os.path.join(working_dir, 'netCNN_{}.pth'.format(epoch)))
         print('Time per epoch: {} seconds'.format(time.time() - begin))
+        if epoch - last_improvement == early_stopping_threshold:
+            print('Stopping training, val loss hasn\'t improved in {} iterations.'.format(early_stopping_threshold))
+            break
     print('Completed training, best val loss was: {}'.format(best_val_loss))
 

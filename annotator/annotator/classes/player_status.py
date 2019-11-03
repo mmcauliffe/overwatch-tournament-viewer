@@ -13,7 +13,7 @@ from collections import defaultdict, Counter
 from annotator.config import sides, BOX_PARAMETERS
 from annotator.annotator.classes.hmm import HMM
 from annotator.api_requests import get_round_states
-from annotator.annotator.classes.base import filter_statuses
+from annotator.annotator.classes.base import filter_statuses, coalesce_statuses
 
 class Team(object):
     def __init__(self, side, player_states):
@@ -78,14 +78,15 @@ class PlayerState(object):
         for i, hero_state in enumerate(self.statuses['hero']):
             print(self.player, hero_state)
             begin = hero_state['begin']
+            end = hero_state['end']
             if i > 0 and begin - self.statuses['hero'][i-1]['end'] < 5:
                 begin = self.statuses['hero'][i-1]['end'] + 0.1
-            switches.append([begin, hero_state['status']])
+            switches.append({'begin': begin, 'hero': hero_state['status'], 'end':end})
         return switches
 
     def generate_status_effects(self, enemy_team, friendly_team):
         import time
-        stunners = ['brigette', 'reinhardt', 'roadhog', 'doomfist', 'mccree', 'sigma']
+        stunners = ['brigitte', 'reinhardt', 'roadhog', 'doomfist', 'mccree', 'sigma']
         status_effect_types = ['antiheal', 'asleep', 'frozen', 'hacked', 'stunned', 'immortal']
         statuses = {}
         print(self.statuses['status'])
@@ -102,7 +103,7 @@ class PlayerState(object):
                     if not interval['status'].startswith('not_') and self.alive_at_time(interval['begin']):
                         statuses[stype].append({'begin': interval['begin'], 'end': interval['end'] + 0.1})
 
-        for interval in self.statuses['status']:
+        for i, interval in enumerate(self.statuses['status']):
             if interval['status'] == 'asleep':
                 if not enemy_team.has_hero_at_time('ana', interval['begin']):
                     continue
@@ -120,8 +121,11 @@ class PlayerState(object):
                         break
                 if has_no_stunner and self.hero_at_time(interval['begin']) != 'd.va':
                     continue
-            if interval['status'] != 'normal' and self.alive_at_time(interval['begin']):
-                statuses[interval['status']].append({'begin': interval['begin'], 'end': interval['end'] + 0.1})
+            if interval['status'] != 'normal': # and self.alive_at_time(interval['begin']):
+                beg = interval['begin']
+                if i != 0:
+                    beg = self.statuses['status'][i-1]['end'] + 0.1
+                statuses[interval['status']].append({'begin': beg, 'end': interval['end'] + 0.1})
         return statuses
 
     def generate_ults(self, mech_deaths=None, revive_events=None):
@@ -146,7 +150,7 @@ class PlayerState(object):
                 current_state = 'in_mech'
                 while current_time < s['end']:
                     print(current_time)
-                    mech_state = {'begin': current_time, 'status':current_state}
+                    mech_state = {'begin': current_time, 'status': current_state}
                     if current_state == 'in_mech':
                         for d in mech_deaths:
                             if d >= current_time:
@@ -177,7 +181,7 @@ class PlayerState(object):
                         else:
                             nearest_death = 100000
                         for u in self.statuses['ult']:
-                            if u['begin'] <= current_time:
+                            if u['begin'] < current_time:
                                 continue
                             if u['status'] == 'no_ult':
                                 nearest_ult_use = u['begin']
@@ -187,7 +191,7 @@ class PlayerState(object):
                         if nearest_death < nearest_ult_use and nearest_death < s['end']:
                             mech_state['end'] = nearest_death
                             current_state = 'dead'
-                        elif nearest_ult_use < nearest_death and nearest_ult_use < s['end']:
+                        elif nearest_ult_use < nearest_death and nearest_ult_use <= s['end']:
                             mech_state['end'] = nearest_ult_use
                             current_state = 'in_mech'
                         else:
@@ -196,7 +200,7 @@ class PlayerState(object):
                         for d in self.statuses['alive']:
                             if d['begin'] == current_time and d['status'] == 'dead':
                                 mech_state['end'] = d['end']
-                                if d['end'] - d['begin'] < 10: # Revive baby dva
+                                if d['end'] - d['begin'] < 7: # Revive baby dva
                                     current_state = 'out_of_mech'
                                 else:
                                     current_state = 'in_mech'
@@ -226,21 +230,22 @@ class PlayerState(object):
                             'ended': ult_state['end'] + 0.1}
             else:
                 continue
-            if False and mech_states: # Ignore dva states for now
+            if mech_states: # Ignore dva states for now
                 out_of_mech_check = False
-                for ms in mech_states:
+                for i, ms in enumerate(mech_states):
                     if ms['status'] == 'out_of_mech' and ms['begin'] <= ultimate['gained'] <= ms['end']:
+                        out_of_mech_check = True
+                    if i != 0 and mech_states[i-1] == 'dead' and ms['begin'] <= ultimate['gained'] <= ms['begin'] + 0.5:
                         out_of_mech_check = True
                 if not out_of_mech_check:
                     ultimates.append(ultimate)
             else:
                 ultimates.append(ultimate)
-        if False and mech_states:
-            print('DVA ANALYSIS')
+        if mech_states:
+            print('DVA ANALYSIS', self.player)
             print('alive', self.statuses['alive'])
             print('mech_states', mech_states)
             print(ultimates)
-            error
         return ultimates
 
 
@@ -252,6 +257,10 @@ class PlayerStatusAnnotator(BaseAnnotator):
 
     def __init__(self, film_format, model_directory, device, left_color, right_color, player_names, spectator_mode='O', debug=False):
         super(PlayerStatusAnnotator, self).__init__(film_format, device, debug=debug)
+        if debug:
+            self.batch_size = 1
+        else:
+            self.batch_size = 100
         self.figure_slot_params(film_format)
         self.model_directory = model_directory
         self.left_team_color = left_color
@@ -262,7 +271,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             'hero': os.path.join(model_directory, 'hero_set.txt'),
             'alive': os.path.join(model_directory, 'alive_set.txt'),
             'ult': os.path.join(model_directory, 'ult_set.txt'),
-            'switch': os.path.join(model_directory, 'switch_set.txt'),
+            #'switch': os.path.join(model_directory, 'switch_set.txt'),
             'status': os.path.join(model_directory, 'status_set.txt'),
             'antiheal': os.path.join(model_directory, 'antiheal_set.txt'),
             'immortal': os.path.join(model_directory, 'immortal_set.txt'),
@@ -273,6 +282,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
             sets[k] = load_set(v)
         input_set_files = {
             'color': os.path.join(model_directory, 'color_set.txt'),
+            'enemy_color': os.path.join(model_directory, 'enemy_color_set.txt'),
             'spectator_mode': os.path.join(model_directory, 'spectator_mode_set.txt'),
              }
         input_sets = {}
@@ -284,19 +294,19 @@ class PlayerStatusAnnotator(BaseAnnotator):
         for p in self.model.parameters():
             p.requires_grad = False
         self.model.to(device)
-        prob_path = os.path.join(model_directory, 'hmm_probs.h5')
-        self.hmms = {}
-        with h5py.File(prob_path, 'r') as hf5:
-            for k in ['hero', 'ult', 'status']:
-                self.hmms[k] = HMM(len(sets[k]))
-                self.hmms[k].startprob_ = hf5['{}_init'.format(k)][:].astype(np.float_)
-                trans = hf5['{}_trans'.format(k)][:].astype(np.float_)
-                for i in range(trans.shape[0]):
-                    if trans[i, i] == 0:
-                        trans[i, i] = 1
-                self.hmms[k].transmat_ = trans
+        #prob_path = os.path.join(model_directory, 'hmm_probs.h5')
+        #self.hmms = {}
+        #with h5py.File(prob_path, 'r') as hf5:
+        #    for k in ['hero', 'ult', 'status']:
+        #        self.hmms[k] = HMM(len(sets[k]))
+        #        self.hmms[k].startprob_ = hf5['{}_init'.format(k)][:].astype(np.float_)
+        #        trans = hf5['{}_trans'.format(k)][:].astype(np.float_)
+        #        for i in range(trans.shape[0]):
+        #            if trans[i, i] == 0:
+        #                trans[i, i] = 1
+        #        self.hmms[k].transmat_ = trans
         self.statuses = {}
-        self.probs = {}
+        #self.probs = {}
         self.image_height = int(self.params['HEIGHT'] * self.resize_factor)
         self.image_width = int(self.params['WIDTH'] * self.resize_factor)
         self.shape = (12, self.batch_size, 3, self.image_height, self.image_width)
@@ -309,10 +319,17 @@ class PlayerStatusAnnotator(BaseAnnotator):
         self.inputs['color'][:6,:] = input_sets['color'].index(self.left_team_color)
         self.inputs['color'][6:,:] = input_sets['color'].index(self.right_team_color)
         self.inputs['color'] = self.inputs['color'].view(12*self.batch_size)
+
+        self.inputs['enemy_color'] = Variable(torch.LongTensor(12, self.batch_size).to(device))
+        self.inputs['enemy_color'][:6,:] = input_sets['enemy_color'].index(self.right_team_color)
+        self.inputs['enemy_color'][6:,:] = input_sets['enemy_color'].index(self.left_team_color)
+        self.inputs['enemy_color'] = self.inputs['enemy_color'].view(12*self.batch_size)
         self.to_predict = np.zeros(self.shape, dtype=np.uint8)
+        self.ignored_time_points = {}
         for s in self.slot_params.keys():
-            self.probs[s] = {k: [] for k in list(self.model.sets.keys())}
+            #self.probs[s] = {k: [] for k in list(self.model.sets.keys())}
             self.statuses[s] = {k: [] for k in list(self.model.sets.keys())}
+            self.ignored_time_points[s] = []
 
     def figure_slot_params(self, film_format):
         left_params = BOX_PARAMETERS[film_format]['LEFT']
@@ -357,8 +374,20 @@ class PlayerStatusAnnotator(BaseAnnotator):
 
     def is_zoomed(self, time_point, side):
         for z in self.zooms[side]:
-            if z['begin'] + 0.3 <= time_point < z['end'] - 0.3:
+            if z['begin'] + 0.4 <= time_point < z['end'] - 0.4:
                 return True
+            if time_point > z['end']:
+                break
+        return False
+
+    def ignore_time_point(self, time_point, side):
+        for z in self.zooms[side]:
+            if z['begin'] <= time_point < z['begin'] + 0.4:
+                return True
+            if z['end'] - 0.4 <= time_point <= z['end']:
+                return True
+            if time_point > z['end']:
+                break
         return False
 
     def process_frame(self, frame, time_point):
@@ -366,6 +395,8 @@ class PlayerStatusAnnotator(BaseAnnotator):
         for i, (s, params) in enumerate(self.slot_params.items()):
             side = s[0]
             zoomed = self.is_zoomed(time_point, side)
+            if self.ignore_time_point(time_point, side):
+                self.ignored_time_points[s].append(time_point)
             if zoomed:
                 params = self.zoomed_params[s]
             else:
@@ -382,12 +413,10 @@ class PlayerStatusAnnotator(BaseAnnotator):
                 box = frame[y: y + self.params['HEIGHT'],
                       x: x + self.params['WIDTH']]
             if self.debug:
-                cv2.imshow('frame_{}'.format(s), box)
+                cv2.imshow('frame_{}_{}'.format(*s), box)
 
             box = np.transpose(box, axes=(2, 0, 1))
             self.to_predict[i, self.process_index, ...] = box[None]
-        if self.debug:
-            cv2.waitKey()
         self.process_index += 1
 
         if self.process_index == self.batch_size:
@@ -406,10 +435,11 @@ class PlayerStatusAnnotator(BaseAnnotator):
             return
         #print(s)
         b = time.time()
-        loadData(self.images, torch.from_numpy(self.to_predict).float().view(12*self.batch_size, 3,
-                                                                             self.image_height, self.image_width))
+        t = torch.from_numpy(self.to_predict).float()
+        t = ((t / 255) - 0.5) / 0.5
+        loadData(self.images, t.view(12*self.batch_size, 3, self.image_height, self.image_width))
         ins = {'image': self.images, 'spectator_mode': self.inputs['spectator_mode'],
-               'color':self.inputs['color']}
+               'color':self.inputs['color'], 'enemy_color': self.inputs['enemy_color']}
         with torch.no_grad():
             predicteds = self.model(ins)
         #print('got predictions:', time.time()-b)
@@ -420,13 +450,15 @@ class PlayerStatusAnnotator(BaseAnnotator):
             predicteds[k] = predicteds[k].view(12, self.batch_size, -1).to('cpu')
             for i, s in enumerate(self.slot_params.keys()):
                 v = predicteds[k][i, ...]
-                self.probs[s][k].extend(v.numpy())
+                #self.probs[s][k].extend(v.numpy())
                 _, v = torch.max(v, 1)
 
 
-                for t_ind in range(self.process_index - 1):
+                for t_ind in range(self.process_index):
                     #cv2.imshow('frame_{}'.format(t_ind), np.transpose(self.to_predict[s][t_ind], axes=(1, 2, 0)))
-                    current_time = self.begin_time + (t_ind * self.time_step)
+                    current_time = round(self.begin_time + (t_ind * self.time_step), 1)
+                    if current_time in self.ignored_time_points[s]:
+                        continue
                     #print(current_time)
                     label = self.model.sets[k][v[t_ind]]
                     #print(label)
@@ -437,9 +469,12 @@ class PlayerStatusAnnotator(BaseAnnotator):
                             self.statuses[s][k][-1]['end'] = current_time
                         else:
                             self.statuses[s][k].append(
-                                {'begin': current_time, 'end': current_time, 'status': label})
-                if k == 'hero' and s == ('left', 1):
-                    print(s, self.statuses[s][k])
+                            {'begin': current_time, 'end': current_time, 'status': label})
+        if self.debug:
+            for s in self.slot_params.keys():
+                print(s)
+                for k, v in self.statuses[s].items():
+                    print('   ', k, v[-1])
             #cv2.waitKey()
         print('Status annotate took: ', time.time() - begin)
 
@@ -477,6 +512,7 @@ class PlayerStatusAnnotator(BaseAnnotator):
                 print(k)
                 print(v)
                 if k == 'hero':
+                    v = filter_statuses(v, 0)
                     new_v = []
                     threshold = 2
                     for i, x in enumerate(v):
@@ -485,10 +521,10 @@ class PlayerStatusAnnotator(BaseAnnotator):
                         else:
                             # No switches while dead
                             alive_check = True
-                            for x2 in status_dict['alive']:
-                                if x2['begin'] <= x['begin'] <= x2['end'] and x2['status'] == 'dead':
-                                    alive_check = False
-                                    break
+                            #for x2 in status_dict['alive']:
+                            #    if x2['begin'] <= x['begin'] <= x2['end'] and x2['status'] == 'dead':
+                            #        alive_check = False
+                            #        break
                             if x['status'] == new_v[-1]['status']:
                                 new_v[-1]['end'] = x['end']
                             elif x['end'] - x['begin'] > threshold and x['status'] != 'n/a' and alive_check:
@@ -497,23 +533,28 @@ class PlayerStatusAnnotator(BaseAnnotator):
                     new_statuses[k] = new_v
                 else:
                     if k == 'alive':
-                        thresholds = {'alive': 3, 'dead': 1}
+                        thresholds = {'alive': 3, 'dead': 1, 'n/a': 1}
                     elif k == 'ult':
-                        thresholds = {'has_ult': 0.4,'using_ult':0.6, 'no_ult': 3}
+                        thresholds = {'has_ult': 0.4, 'using_ult': 0.6, 'no_ult': 3, 'n/a': 1}
                     elif k == 'status':
-                        thresholds = {'stunned': 0.3, 'asleep': 1, 'hacked': 1, 'normal': 0.3, 'frozen': 0.4}
+                        thresholds = {'stunned': 0.3, 'asleep': 0.3, 'hacked': 1, 'normal': 0.5, 'frozen': 0.4}
+                        for i, interval in enumerate(v):
+                            if interval['status'] != 'normal' and interval['end'] - interval['begin'] == 0:
+                                if i < len(v) - 1 and v[i+1]['status'] != 'normal':
+                                    v[i]['status'] = v[i+1]['status']
+                        v = coalesce_statuses(v)
                     elif k == 'antiheal':
-                        thresholds = {'not_antiheal': 1, 'antiheal': 0.4}
+                        thresholds = {'not_antiheal': 1, 'antiheal': 0.4, 'n/a': 1}
                     elif k == 'immortal':
-                        thresholds = {'not_immortal': 1, 'immortal': 0.4}
+                        thresholds = {'not_immortal': 1, 'immortal': 0.4, 'n/a': 1}
                     elif k == 'switch':
-                        thresholds = {'not_switch': 0.3, 'switch': 0.3}
+                        thresholds = {'not_switch': 0.3, 'switch': 0.3, 'n/a': 1}
                     else:
                         print(k)
                         raise Exception('Unknown key')
                     v = filter_statuses(v, thresholds)
                     new_v = []
-                    for i,x in enumerate(v):
+                    for i, x in enumerate(v):
                         if k == 'ult' and x['status'] != 'no_ult' and x['begin'] < 10:
                             continue
                         if not new_v:
@@ -522,23 +563,13 @@ class PlayerStatusAnnotator(BaseAnnotator):
                             if x['status'] == new_v[-1]['status']:
                                 new_v[-1]['end'] = x['end']
                             else:
-                                if k == 'ult' and x['status'] == 'using_ult' and i != len(v) - 1 and v[i+1]['status'] == 'has_ult':
+                                if k == 'status' and x['status'] == 'stunned' and i != len(v) - 1 and i != 0 and v[i+1]['status'] == v[i-1]['status'] == 'asleep':
                                     continue
-                                if k == 'ult' and x['status'] == 'has_ult' and i != len(v) - 1 and v[i+1]['status'] != 'using_ult':
-                                    continue
-                                alive_check = True
-                                if k == 'status' and x['status'] != 'normal':
-                                    for x2 in status_dict['alive']:
-                                        if x2['begin'] <= x['begin'] <= x2['end'] and x2['status'] == 'dead' and x2:
-                                            alive_check = False
-                                            break
-                                elif k in ['immortal', 'antiheal'] and not x['status'].startswith('not_'):
-                                    for x2 in status_dict['alive']:
-                                        if x2['begin'] <= x['begin'] <= x2['end'] and x2['status'] == 'dead' and x2:
-                                            alive_check = False
-                                            break
-                                if alive_check:
-                                    new_v.append(x)
+                                #if k == 'ult' and x['status'] == 'using_ult' and i != len(v) - 1 and v[i+1]['status'] == 'has_ult':
+                                #    continue
+                                #if k == 'ult' and x['status'] == 'has_ult' and i != len(v) - 1 and v[i+1]['status'] != 'using_ult':
+                                #    continue
+                                new_v.append(x)
                     new_v[0]['begin'] = 0
                     new_statuses[k] = new_v
 

@@ -1,15 +1,16 @@
 from torch.utils.data import Dataset
 import torch
-import lmdb
 import h5py
 import os
 import pickle
 import sys
+from collections import Counter
 import numpy as np
 
 
 class CTCHDF5Dataset(Dataset):
-    def __init__(self, train_dir, batch_size, blank_ind, pre='train', recent=False):
+    def __init__(self, train_dir, batch_size, blank_ind, pre='train', recent=False, get_time_point=False):
+        self.get_time_point = get_time_point
         self.pre = pre
         self.batch_size = batch_size
         self.blank_ind = blank_ind
@@ -32,6 +33,24 @@ class CTCHDF5Dataset(Dataset):
     def __len__(self):
         return int(self.data_num / self.batch_size)
 
+    def generate_sample_weights(self, label_set):
+        counts = Counter()
+        for i, (next_ind, path) in enumerate(self.data_indices.items()):
+            with h5py.File(path, 'r') as hf5:
+                labels = hf5["{}_label_sequence".format(self.pre)][:].astype(np.int16)
+                lengths = hf5["{}_label_sequence_length".format(self.pre)][:]
+                for j in range(labels.shape[0]):
+                    name = tuple(labels[j][:lengths[j]])
+                    counts[name] += 1
+        total = max(counts.values())
+        self.weights = {k: 1 - (v / total) for k, v in counts.items()}
+        print('MAX', total)
+        for k, v in self.weights.items():
+            if len(k) < 2:
+                continue
+            print(''.join(label_set[x] for x in k), counts[k], v)
+        #print(self.weights)
+
     def __getitem__(self, index):
         start_ind = 0
         real_index = index * self.batch_size
@@ -46,12 +65,14 @@ class CTCHDF5Dataset(Dataset):
         real_index = real_index - start_ind
         inputs = {}
         outputs = {}
+        weights = []
         with h5py.File(path, 'r') as hf5:
             lengths = hf5["{}_label_sequence_length".format(self.pre)][real_index:real_index+self.batch_size]
             im = hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             rd = hf5['{}_round'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             specs = hf5['{}_spectator_mode_label'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             labs = hf5["{}_label_sequence".format(self.pre)][real_index:real_index+self.batch_size, ...].astype(np.int16)
+
             # For removing all blank images
             inds = lengths != 1
 
@@ -62,9 +83,21 @@ class CTCHDF5Dataset(Dataset):
             lengths = lengths[inds]
 
             labs[labs > self.blank_ind] = self.blank_ind
+            if self.weights:
+                for i in range(labs.shape[0]):
+                    name = tuple(labs[i][:lengths[i]])
+                    if name not in self.weights:
+                        w = 1
+                    else:
+                        w = self.weights[name]
+                    weights.append(w)
             labs = labs.reshape(labs.shape[0] * labs.shape[1])
             labs = labs[labs != self.blank_ind]
             labs += 1
+            if self.get_time_point:
+                tp = hf5['{}_time_point'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+                tp = tp[inds]
+                inputs['time_point'] = torch.from_numpy(tp).float()
             inputs['image']= torch.from_numpy(im).float()
             inputs['spectator_mode'] = torch.from_numpy(specs).long()
             inputs['round'] = torch.from_numpy(rd).long()
@@ -89,16 +122,30 @@ class CTCHDF5Dataset(Dataset):
                 lengths = lengths[inds]
 
                 labs[labs > self.blank_ind] = self.blank_ind
+                if self.weights:
+                    for i in range(labs.shape[0]):
+                        name = tuple(labs[i][:lengths[i]])
+                        if name not in self.weights:
+                            w = 1
+                        else:
+                            w = self.weights[name]
+                        weights.append(w)
                 labs = labs.reshape(labs.shape[0] * labs.shape[1])
                 labs = labs[labs != self.blank_ind]
                 labs += 1
+                if self.get_time_point:
+                    tp= hf5['{}_time_point'.format(self.pre)][0:from_next, ...]
+                    tp = tp[inds]
+                    inputs['time_point'] = torch.cat((inputs['time_point'], torch.from_numpy(tp).float()), 0)
                 inputs['image' ]= torch.cat((inputs['image'], torch.from_numpy(im).float()), 0)
                 inputs['spectator_mode'] = torch.cat((inputs['spectator_mode'], torch.from_numpy(specs).long()), 0)
                 inputs['round'] = torch.cat((inputs['round'], torch.from_numpy(rd).long()), 0)
 
                 outputs['the_labels'] = torch.cat((outputs['the_labels'], torch.from_numpy(labs).long()), 0)
                 outputs['label_length'] = torch.cat((outputs['label_length'], torch.from_numpy(lengths).long()), 0)
-
+        inputs['image'] = ((inputs['image'] / 255) - 0.5) / 0.5
+        if self.weights:
+            return inputs, outputs, torch.from_numpy(np.array(weights)).float()
         return inputs, outputs
 
 
@@ -162,8 +209,8 @@ class LabelConverter(object):
         """Decode encoded texts back into strs.
 
         Args:
-            torch.IntTensor [length_0 + length_1 + ... length_{n - 1}]: encoded texts.
-            torch.IntTensor [n]: length of each text.
+            torch.LongTensor [length_0 + length_1 + ... length_{n - 1}]: encoded texts.
+            torch.LongTensor [n]: length of each text.
 
         Raises:
             AssertionError: when the texts and its length does not match.
@@ -194,6 +241,6 @@ class LabelConverter(object):
                 l = length[i]
                 texts.append(
                     self.decode(
-                        t[index:index + l], torch.IntTensor([l]), raw=raw))
+                        t[index:index + l], torch.LongTensor([l]), raw=raw))
                 index += l
             return texts

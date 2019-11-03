@@ -1,14 +1,10 @@
 from torch.utils.data import Dataset
 import torch
-import lmdb
 import os
 import h5py
-import pickle
-import sys
 import cv2
 from collections import Counter
 import numpy as np
-import random
 
 
 class LstmCnnHDF5Dataset(Dataset):
@@ -34,8 +30,8 @@ class LstmCnnHDF5Dataset(Dataset):
                     self.data_num += h5f['{}_img'.format(self.pre)].shape[0]
                     self.data_indices[self.data_num] = os.path.join(train_dir, f)
                 count += 1
-                #if count > 1:
-                #    break
+                if count > 10:
+                    break
         self.weights = {}
         print('DONE SETTING UP')
 

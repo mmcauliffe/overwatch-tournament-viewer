@@ -81,13 +81,13 @@ class GameGenerator(DataGenerator):
         #print(box.shape)
         #cv2.waitKey()
         box = np.transpose(box, axes=(2, 0, 1))
-        self.hdf5_file["{}_img".format(pre)][index, ...] = box[None]
-        self.hdf5_file["{}_round".format(pre)][index] = self.current_round_id
+        self.data["{}_img".format(pre)][index, ...] = box[None]
+        self.data["{}_round".format(pre)][index] = self.current_round_id
 
-        self.hdf5_file["{}_time_point".format(pre)][index] = time_point
+        self.data["{}_time_point".format(pre)][index] = time_point
 
         for k, s in self.sets.items():
-            self.hdf5_file["{}_{}_label".format(pre, k)][index] = s.index(d[k])
+            self.data["{}_{}_label".format(pre, k)][index] = s.index(d[k])
 
         self.process_index += 1
         if self.debug:
@@ -159,8 +159,8 @@ class GameGenerator(DataGenerator):
         self.num_train, 3, int(self.image_height * self.resize_factor), int(self.image_width * self.resize_factor))
         val_shape = (
         self.num_val, 3, int(self.image_height * self.resize_factor), int(self.image_width * self.resize_factor))
-        self.hdf5_file = h5py.File(self.hd5_path, mode='w')
 
+        self.data = {}
         for pre in ['train', 'val']:
             if pre == 'train':
                 shape = train_shape
@@ -168,12 +168,11 @@ class GameGenerator(DataGenerator):
             else:
                 shape = val_shape
                 count = self.num_val
-            self.hdf5_file.create_dataset("{}_img".format(pre), shape, np.uint8,
-                                          maxshape=(None, shape[1], shape[2], shape[3]))
-            self.hdf5_file.create_dataset("{}_round".format(pre), (count,), np.int16, maxshape=(None,))
-            self.hdf5_file.create_dataset("{}_time_point".format(pre), (count,), np.float, maxshape=(None,))
+            self.data["{}_img".format(pre)] = np.zeros(shape, dtype=np.uint8)
+            self.data["{}_round".format(pre)] = np.zeros((count,), dtype=np.int16)
+            self.data["{}_time_point".format(pre)] = np.zeros((count,), dtype=np.float)
             for k, s in self.sets.items():
-                self.hdf5_file.create_dataset("{}_{}_label".format(pre, k), (count,), np.uint8, maxshape=(None,))
+                self.data["{}_{}_label".format(pre, k)] =  np.zeros((count,), dtype=np.uint8)
 
         self.process_index = 0
 
