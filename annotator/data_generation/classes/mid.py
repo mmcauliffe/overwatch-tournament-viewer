@@ -39,7 +39,7 @@ class MidStatusGenerator(DataGenerator):
         self.save_set_info()
 
     def figure_slot_params(self, r):
-        film_format = r['stream_vod']['film_format']
+        film_format = r['stream_vod']['film_format']['code']
         params = BOX_PARAMETERS[film_format]['MID']
         self.slot_params = {}
         self.slot_params[1] = {'x': params['X'], 'y': params['Y']}
@@ -54,8 +54,8 @@ class MidStatusGenerator(DataGenerator):
         d['round_number'] = self.round_number
         return d
 
-    def add_new_round_info(self, r):
-        super(MidStatusGenerator, self).add_new_round_info(r)
+    def add_new_round_info(self, r, reset=False):
+        super(MidStatusGenerator, self).add_new_round_info(r, reset=reset)
         if not self.generate_data:
             return
 

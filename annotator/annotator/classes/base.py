@@ -17,13 +17,18 @@ def coalesce_statuses(statuses):
     return new_status
 
 
-def filter_statuses(statuses, duration_threshold):
+def filter_statuses(statuses, duration_threshold, protect_initial=False):
     if duration_threshold != 0:  # Filter 0 intervals first
         statuses = filter_statuses(statuses, 0)
     if isinstance(duration_threshold, dict):
-        statuses = [x for x in statuses if x['status'] not in duration_threshold or round(x['end'] - x['begin'], 1) >= duration_threshold[x['status']]]
+        statuses = [x for i, x in enumerate(statuses)
+                    if x['status'] not in duration_threshold or
+                    round(x['end'] - x['begin'], 1) >= duration_threshold[x['status']]
+                    or i == len(statuses) - 1 or (protect_initial and i == 0)]
     else:
-        statuses = [x for x in statuses if round(x['end'] - x['begin'], 1) >= duration_threshold]
+        statuses = [x for i, x in enumerate(statuses)
+                    if round(x['end'] - x['begin'], 1) >= duration_threshold
+                    or i == len(statuses) - 1 or (protect_initial and i == 0)]
     return coalesce_statuses(statuses)
 
 

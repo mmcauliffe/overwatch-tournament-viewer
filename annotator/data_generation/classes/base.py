@@ -47,7 +47,7 @@ class DataGenerator(object):
                         s.append(line.strip())
                 assert s == self.sets[k][len(s)]
 
-    def display_current_frame(self, frame, time_point):
+    def display_current_frame(self, frame, time_point, frame_ind):
         for slot in self.slots:
             if isinstance(slot, (list, tuple)):
                 slot_name = '_'.join(map(str, slot))
@@ -77,6 +77,7 @@ class DataGenerator(object):
     def process_frame(self, frame, time_point, frame_ind):
         if not self.generate_data:
             return
+        frame = frame['frame']
         for slot in self.slots:
             d = self.lookup_data(slot, time_point)
             params = self.slot_params[slot]
@@ -129,9 +130,19 @@ class DataGenerator(object):
             for r in self.analyzed_rounds:
                 f.write('{}\n'.format(r))
 
-    def add_new_round_info(self, r):
+    def add_new_round_info(self, r, reset = False):
+        import shutil
+        spec_dir = os.path.join(self.training_directory, r['spectator_mode'].lower())
+        os.makedirs(spec_dir, exist_ok=True)
+        old_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
+        self.hd5_path = os.path.join(spec_dir, '{}.hdf5'.format(r['id']))
+        if os.path.exists(old_path):
+            shutil.move(old_path, self.hd5_path)
+            self.generate_data = False
+            return
         self.current_round_id = r['id']
-        self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
+        if reset and os.path.exists(self.hd5_path):
+            os.remove(self.hd5_path)
         if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
@@ -139,6 +150,10 @@ class DataGenerator(object):
 
         num_frames = 0
         for beg, end in r['sequences']:
+            beg += 0.1
+            beg = round(beg, 1)
+            end -= 0.1
+            end = round(end, 1)
             expected_duration = end - beg
             expected_frame_count = expected_duration / self.time_step
             num_frames += (int(expected_frame_count) + 1) * self.num_slots

@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 from annotator.data_generation.classes.base import DataGenerator
-from annotator.config import na_lab, sides, BOX_PARAMETERS, BASE_TIME_STEP
+from annotator.config import na_lab, sides, BOX_PARAMETERS, BASE_TIME_STEP, PLAYER_WIDTH, PLAYER_HEIGHT
 from annotator.utils import look_up_player_state
 from annotator.api_requests import get_player_states, get_round_states
 from annotator.game_values import HERO_SET, COLOR_SET, STATUS_SET, SPECTATOR_MODES
@@ -16,7 +16,9 @@ class PlayerStatusGenerator(DataGenerator):
     num_slots = 12
     num_variations = 1
     time_step = BASE_TIME_STEP
-    secondary_time_step = round(BASE_TIME_STEP * 3, 1)
+    secondary_time_step = round(BASE_TIME_STEP * 4, 1)
+    use_window = False
+    usable_annotations = ['M', 'O']
 
     def __init__(self):
         super(PlayerStatusGenerator, self).__init__()
@@ -24,11 +26,11 @@ class PlayerStatusGenerator(DataGenerator):
                      'ult': [na_lab, 'no_ult', 'using_ult', 'has_ult'],
                      'alive': [na_lab, 'alive', 'dead'],
                      'side': [na_lab] + sides,
-                     'color': [na_lab] + COLOR_SET,
-                     'enemy_color': [na_lab] + COLOR_SET,
+                     #'color': [na_lab] + COLOR_SET,
+                     #'enemy_color': [na_lab] + COLOR_SET,
                      'spectator_mode': SPECTATOR_MODES,
                      #'switch': [na_lab, 'switch', 'not_switch'],
-                     'status': ['normal', 'asleep', 'frozen', 'hacked', 'stunned']
+                     'status': ['normal', 'asleep', 'frozen', 'hacked', 'stunned', 'discord', 'resurrecting']
                      }
         for s in STATUS_SET:
             if s == 'status':
@@ -39,9 +41,8 @@ class PlayerStatusGenerator(DataGenerator):
                 continue
             self.sets[s] = [na_lab] + ['not_' + s, s]
         self.save_set_info()
-        params = BOX_PARAMETERS['O']['LEFT']
-        self.image_width = params['WIDTH']
-        self.image_height = params['HEIGHT']
+        self.image_width = PLAYER_WIDTH
+        self.image_height =PLAYER_HEIGHT
         for s in sides:
             for i in range(6):
                 self.slots.append((s, i))
@@ -51,7 +52,7 @@ class PlayerStatusGenerator(DataGenerator):
         self.slot_indices = {}
 
     def figure_slot_params(self, r):
-        film_format = r['stream_vod']['film_format']
+        film_format = r['stream_vod']['film_format']['code']
         left_params = BOX_PARAMETERS[film_format]['LEFT']
         right_params = BOX_PARAMETERS[film_format]['RIGHT']
         self.slot_params = {}
@@ -85,13 +86,32 @@ class PlayerStatusGenerator(DataGenerator):
 
     def is_zoomed(self, time_point, side):
         for z in self.zooms[side]:
-            if z['begin'] + 0.3 <= time_point < z['end'] - 0.3:
+            if round(z['begin'] + 0.3, 1) <= time_point < round(z['end'] - 0.3, 1):
+                return True
+        return False
+
+    def check_status(self, slot, time_point):
+        for interval in self.status_state[slot]:
+            if interval['end'] >= time_point >= interval['begin']:
+                return True
+        return False
+
+    def ignore_time_point(self, time_point, side):
+        for z in self.zooms[side]:
+            if z['begin'] <= time_point < round(z['begin'] + 0.5, 1):
+                return True
+            if round(z['end'] - 0.5, 1) <= time_point <= z['end']:
                 return True
         return False
 
     def get_data(self, r):
+        self.status_state = {}
         self.left_color = r['game']['left_team']['color'].lower()
         self.right_color = r['game']['right_team']['color'].lower()
+        self.left_color_hex = r['game']['left_team_color_hex'].lstrip('#')
+        self.right_color_hex = r['game']['right_team_color_hex'].lstrip('#')
+        self.left_color_hex = tuple(int(self.left_color_hex[i:i+2], 16) for i in (0, 2, 4))
+        self.right_color_hex = tuple(int(self.right_color_hex[i:i+2], 16) for i in (0, 2, 4))
         self.spec_mode = r['spectator_mode'].lower()
         self.slot_indices = {}
         for s in self.slots:
@@ -106,9 +126,39 @@ class PlayerStatusGenerator(DataGenerator):
             for z in zooms[side]:
                 if z['status'] == 'zoomed':
                     self.zooms[side].append(z)
-
-    def display_current_frame(self, frame, time_point):
         for slot in self.slots:
+            print(slot)
+            self.status_state[slot] = []
+            intervals = self.states[slot[0]][str(slot[1])]['status']
+            anti_intervals = [x for x in self.states[slot[0]][str(slot[1])]['antiheal'] if x['status'] == 'antiheal']
+            nano_intervals = [x for x in self.states[slot[0]][str(slot[1])]['nanoboosted'] if x['status'] == 'nanoboosted']
+            intervals = sorted(intervals+ anti_intervals+ nano_intervals, key=lambda x: x['begin'])
+            if len(intervals) == 1:
+                continue
+            for interval in intervals:
+                if interval['status'] == 'normal':
+                    continue
+                if not self.status_state[slot]:
+                    self.status_state[slot].append({'begin': interval['begin'], 'end': interval['end']})
+                else:
+                    for existing_interval in self.status_state[slot]:
+                        if existing_interval['end'] >= interval['begin'] >= existing_interval['begin']:
+                            existing_interval['end'] = interval['end']
+                            break
+                        elif existing_interval['end'] >= interval['end'] >= existing_interval['begin']:
+                            existing_interval['begin'] = interval['begin']
+                            break
+                    else:
+                        self.status_state[slot].append({'begin': interval['begin'], 'end': interval['end']})
+
+            print(self.status_state[slot])
+
+    def display_current_frame(self, frame, time_point, frame_ind):
+        for slot in self.slots:
+            is_status = self.check_status(slot, time_point)
+            if not is_status:
+                if frame_ind % (self.secondary_time_step/self.time_step) != 0:
+                    continue
 
             d = self.lookup_data(slot, time_point)
             print(slot, d)
@@ -127,18 +177,23 @@ class PlayerStatusGenerator(DataGenerator):
             if zoomed:
                 box = frame[y: y + self.zoomed_height,
                       x: x + self.zoomed_width]
-                box = cv2.resize(box, (64, 64))
+                box = cv2.resize(box, (self.image_height, self.image_width))
             else:
                 box = frame[y: y + self.image_height,
                       x: x + self.image_width]
             cv2.imshow('{}_{}'.format(self.identifier, slot_name), box)
 
-    def process_frame(self, frame, time_point, frame_ind):
+    def process_frame(self, frame_data, time_point, frame_ind):
         if not self.generate_data:
             return
         for slot in self.slots:
             side = slot[0]
+            is_status = self.check_status(slot, time_point)
+            if not is_status:
+                if frame_ind % (self.secondary_time_step/self.time_step) != 0:
+                    continue
             zoomed = self.is_zoomed(time_point, side)
+            ignore = self.ignore_time_point(time_point, side)
             d = self.lookup_data(slot, time_point)
             if zoomed:
                 params = self.zoomed_params[slot]
@@ -162,12 +217,28 @@ class PlayerStatusGenerator(DataGenerator):
                 else:
                     pre = 'val'
                     index -= self.num_train
+                if ignore:
+                    self.ignored_indexes[pre].append(index)
+                    self.process_index += 1
+                    continue
                 if zoomed:
-                    box = frame[y + y_offset: y + self.zoomed_height + y_offset,
+                    if self.use_window:
+                        prev = frame_data['prev'][y + y_offset: y + self.zoomed_height + y_offset,
+                              x + x_offset: x + self.zoomed_width + x_offset]
+                        next = frame_data['next'][y + y_offset: y + self.zoomed_height + y_offset,
+                              x + x_offset: x + self.zoomed_width + x_offset]
+                        prev = cv2.resize(prev, (self.image_height, self.image_width))
+                        next = cv2.resize(next, (self.image_height, self.image_width))
+                    box = frame_data['frame'][y + y_offset: y + self.zoomed_height + y_offset,
                           x + x_offset: x + self.zoomed_width + x_offset]
                     box = cv2.resize(box, (self.image_height, self.image_width))
                 else:
-                    box = frame[y + y_offset: y + self.image_height + y_offset,
+                    if self.use_window:
+                        prev = frame_data['prev'][y + y_offset: y + self.image_height + y_offset,
+                              x + x_offset: x + self.image_width + x_offset]
+                        next = frame_data['next'][y + y_offset: y + self.image_height + y_offset,
+                              x + x_offset: x + self.image_width + x_offset]
+                    box = frame_data['frame'][y + y_offset: y + self.image_height + y_offset,
                           x + x_offset: x + self.image_width + x_offset]
                 if False:
                     cv2.imshow('frame_{}'.format(slot), box)
@@ -175,10 +246,19 @@ class PlayerStatusGenerator(DataGenerator):
                     print(d)
                     cv2.waitKey()
                 box = np.transpose(box, axes=(2, 0, 1))
-                self.data["{}_img".format(pre)][index, ...] = box[None]
+                if self.use_window:
+                    prev = np.transpose(prev, axes=(2, 0, 1))
+                    next = np.transpose(next, axes=(2, 0, 1))
+                    self.data["{}_img".format(pre)][index, 0, ...] = prev[None]
+                    self.data["{}_img".format(pre)][index, 1, ...] = box[None]
+                    self.data["{}_img".format(pre)][index, 2, ...] = next[None]
+                else:
+                    self.data["{}_img".format(pre)][index, ...] = box[None]
                 self.data["{}_round".format(pre)][index] = self.current_round_id
 
                 self.data["{}_time_point".format(pre)][index] = time_point
+                self.data['{}_color'.format(pre)][index, :] = d['color_hex']
+                self.data['{}_enemy_color'.format(pre)][index, :] = d['enemy_color_hex']
 
                 for k, s in self.sets.items():
                     self.data["{}_{}_label".format(pre, k)][index] = s.index(d[k])
@@ -189,25 +269,49 @@ class PlayerStatusGenerator(DataGenerator):
                     cv2.imwrite(os.path.join(self.training_directory, 'debug', pre,
                                          filename), np.transpose(box, axes=(1,2,0)))
 
-    def add_new_round_info(self, r):
+    def add_new_round_info(self, r, reset=False):
+        if r['id'] < 9359:
+            self.generate_data = False
+            return
         self.current_round_id = r['id']
-        self.hd5_path = os.path.join(self.training_directory, '{}.hdf5'.format(r['id']))
+        spec_mode_directory = os.path.join(self.training_directory, r['spectator_mode'].lower())
+        os.makedirs(spec_mode_directory, exist_ok=True)
+        self.hd5_path = os.path.join(spec_mode_directory, '{}.hdf5'.format(r['id']))
+        if reset and os.path.exists(self.hd5_path):
+            os.remove(self.hd5_path)
         if os.path.exists(self.hd5_path) or r['annotation_status'] not in self.usable_annotations:
             self.generate_data = False
             return
-        if r['id'] < 9359:
-            self.time_step = round(BASE_TIME_STEP * 3, 1)
-            self.has_status = False
-        else:
-            self.time_step = BASE_TIME_STEP
-            self.has_status = True
+        self.time_step = BASE_TIME_STEP
+        self.secondary_time_step = round(BASE_TIME_STEP * 4, 1)
+        if r['annotation_status'] == 'O':
+            self.time_step = round(self.time_step * 2, 1)
+            self.secondary_time_step = round(self.secondary_time_step * 2, 1)
+        self.has_status = False
         self.get_data(r)
         expected_duration = 0
         for beg, end in r['sequences']:
+            beg += 0.1
+            beg = round(beg, 1)
+            end -= 0.1
+            end = round(end, 1)
+            if end <= beg:
+                continue
             expected_duration += end - beg
-        num_frames_per_slot = int(expected_duration / self.time_step)
+        num_frames = 0
+        for slot in self.slots:
+            print(slot)
+            status_duration = round(sum([x['end'] - x['begin'] for x in self.status_state[slot]]), 1)
 
-        num_frames = num_frames_per_slot * self.num_variations * self.num_slots
+            normal_duration = expected_duration - status_duration
+            normal_frame_count = int(normal_duration / self.secondary_time_step)
+            status_frame_count = int(status_duration / self.time_step)
+            num_frames += normal_frame_count + status_frame_count
+            print('NORMAL', normal_duration, normal_frame_count)
+            print('STATUS', status_duration, status_frame_count)
+            if not self.has_status:
+                self.has_status = status_duration > 0
+        num_frames *= self.num_variations
         print('TOTAL FRAMES', num_frames)
         self.num_train = int(num_frames * 0.8)
         self.num_val = num_frames - self.num_train
@@ -218,11 +322,16 @@ class PlayerStatusGenerator(DataGenerator):
 
         self.indexes = random.sample(range(num_frames), num_frames)
 
-        train_shape = (self.num_train, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
-        val_shape = (self.num_val, 3, int(self.image_height *self.resize_factor), int(self.image_width*self.resize_factor))
-
+        if self.use_window:
+            train_shape = (self.num_train, 3, 3, int(self.image_height * self.resize_factor), int(self.image_width * self.resize_factor))
+            val_shape = (self.num_val, 3, 3, int(self.image_height * self.resize_factor), int(self.image_width * self.resize_factor))
+        else:
+            train_shape = (self.num_train, 3, int(self.image_height * self.resize_factor), int(self.image_width * self.resize_factor))
+            val_shape = (self.num_val, 3, int(self.image_height * self.resize_factor), int(self.image_width * self.resize_factor))
         self.data = {}
+        self.ignored_indexes = {}
         for pre in ['train', 'val']:
+            self.ignored_indexes[pre] = []
             if pre == 'train':
                 shape = train_shape
                 count = self.num_train
@@ -230,6 +339,8 @@ class PlayerStatusGenerator(DataGenerator):
                 shape = val_shape
                 count = self.num_val
             self.data["{}_img".format(pre)] = np.zeros(shape, dtype=np.uint8)
+            self.data['{}_color'.format(pre)] = np.zeros((count,3), dtype=np.uint8)
+            self.data['{}_enemy_color'.format(pre)] = np.zeros((count,3), dtype=np.uint8)
             self.data["{}_round".format(pre)] = np.zeros((count,), dtype=np.int16)
             self.data["{}_time_point".format(pre)] = np.zeros((count,), dtype=np.float)
             for k, s in self.sets.items():
@@ -246,7 +357,7 @@ class PlayerStatusGenerator(DataGenerator):
                 continue
             if len(states[k]) == 0:
                 for k, v in self.sets.items():
-                    d[k] = v[0] # n/az
+                    d[k] = v[0] # n/a
                 break
             while time_point >= states[k][self.slot_indices[slot][k]]['end'] and self.slot_indices[slot][k] < len(states[k]) - 1:
                 self.slot_indices[slot][k] += 1
@@ -255,13 +366,31 @@ class PlayerStatusGenerator(DataGenerator):
                 d[k] = states[k][index]['hero']['name'].lower()
             else:
                 d[k] = states[k][index]['status'].lower()
+        if d['hero'] == na_lab:
+            d['ult'] = na_lab
+            d['antiheal'] = na_lab
+            d['immortal'] = na_lab
+            d['alive'] = na_lab
         #d = look_up_player_state(slot[0], slot[1], time_point, self.states, self.has_status)
         d['spectator_mode'] = self.spec_mode
         if slot[0] == 'left':
             d['color'] = self.left_color
             d['enemy_color'] = self.right_color
+            d['color_hex'] = self.left_color_hex
+            d['enemy_color_hex'] = self.right_color_hex
         else:
             d['color'] = self.right_color
             d['enemy_color'] = self.left_color
+            d['color_hex'] = self.right_color_hex
+            d['enemy_color_hex'] = self.left_color_hex
         d['side'] = slot[0]
         return d
+
+    def cleanup_round(self):
+        if not self.generate_data:
+            return
+        for pre, ignored in self.ignored_indexes.items():
+            if ignored:
+                for k, v in self.data.items():
+                    self.data[k] = np.delete(v, ignored, axis=0)
+        super(PlayerStatusGenerator, self).cleanup_round()

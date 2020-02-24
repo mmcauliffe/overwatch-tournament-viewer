@@ -11,7 +11,7 @@ from annotator.training.helper import load_set
 from annotator.training.ctc_helper import loadData
 from collections import defaultdict, Counter
 from annotator.config import sides, BOX_PARAMETERS
-from annotator.models.crnn import KillFeedCRNN
+from annotator.models.crnn import SideKillFeedCRNN
 from annotator.models.cnn import KillFeedCNN
 from annotator.game_values import HERO_SET, COLOR_SET, ABILITY_SET, KILL_FEED_INFO
 
@@ -26,7 +26,7 @@ npc_mapping = KILL_FEED_INFO['npc_mapping']
 def close_events(e_one, e_two):
     if e_one['second_hero'] != e_two['second_hero']:
         return False
-    if e_one['second_color'] != e_two['second_color']:
+    if e_one['second_side'] != e_two['second_side']:
         return False
     if e_one['second_hero'] in npc_set:
         if e_one['first_hero'] != e_two['first_hero']:
@@ -35,7 +35,7 @@ def close_events(e_one, e_two):
     else:
         if e_one['first_hero'] != e_two['first_hero']:
             return False
-        if e_one['first_color'] != e_two['first_color']:
+        if e_one['first_side'] != e_two['first_side']:
             return False
         # if e_one['ability'] != e_two['ability']:
         #    return False
@@ -45,15 +45,12 @@ def close_events(e_one, e_two):
 def merged_event(e_one, e_two):
     if e_one['duration'] > e_two['duration']:
         merged_e = {k: v for k,v in e_one['event'].items()}
-        if merged_e['first_hero'] == 'n/a':
+        if merged_e['first_hero'] == 'n/a' and merged_e['first_side'] in ['left', 'right']:
             merged_e['first_hero'] = e_two['event']['first_hero']
     else:
         merged_e = {k: v for k,v in e_two['event'].items()}
-        if merged_e['first_hero'] == 'n/a':
+        if merged_e['first_hero'] == 'n/a' and merged_e['first_side'] in ['left', 'right']:
             merged_e['first_hero'] = e_one['event']['first_hero']
-    for a in e_one['event']['assists'] + e_two['event']['assists']:
-        if a not in merged_e['assists']:
-            merged_e['assists'].append(a)
     return merged_e
 
 
@@ -69,36 +66,56 @@ def convert_colors(color, left_color, right_color):
     else:
         return color
 
+
 class KillFeedAnnotator(BaseAnnotator):
     time_step = 0.1
     identifier = 'kill_feed'
     box_settings = 'KILL_FEED_SLOT'
 
-    def __init__(self, film_format, model_directory, exists_model_directory, device, half_size_npcs=True, spectator_mode='O', debug=False):
+    def __init__(self, film_format, model_directory, exists_model_directory, device, left_color, right_color, half_size_npcs=True,
+                 spectator_mode='O', debug=False):
         super(KillFeedAnnotator, self).__init__(film_format, device, debug=debug)
+        print('=== SETTING UP KILL FEED ANNOTATOR ===')
         self.slots = range(6)
         self.figure_slot_params(film_format)
         self.half_size_npcs = half_size_npcs
         self.spectator_mode = spectator_mode
+        self.left_color = left_color
+        self.right_color = right_color
         self.model_directory = model_directory
         label_set = load_set(os.path.join(model_directory, 'labels_set.txt'))
-        spectator_mode_set = load_set(os.path.join(model_directory, 'spectator_mode_set.txt'))
         set_paths = {
-            'exist': os.path.join(exists_model_directory, 'exist_label_set.txt'),
+            'exist': os.path.join(exists_model_directory, 'exist_set.txt'),
+            'size': os.path.join(exists_model_directory, 'size_set.txt'),
         }
 
         sets = {}
+        input_sets = {}
         for k, v in set_paths.items():
             sets[k] = load_set(v)
-        self.exists_model = KillFeedCNN(sets)
-        self.exists_model.load_state_dict(torch.load(os.path.join(exists_model_directory, 'model.pth')))
+        self.exists_model = KillFeedCNN(sets, input_sets=input_sets)
+        spec_dir = os.path.join(exists_model_directory, self.spectator_mode)
+        if os.path.exists(spec_dir):
+            exists_model_path = os.path.join(spec_dir, 'model.pth')
+            print('Using {} exists model!'.format(self.spectator_mode))
+        else:
+            exists_model_path = os.path.join(exists_model_directory, 'model.pth')
+            print('Using base exists model!')
+        self.exists_model.load_state_dict(torch.load(exists_model_path))
         self.exists_model.eval()
         for p in self.exists_model.parameters():
             p.requires_grad = False
         self.exists_model.to(device)
 
-        self.model = KillFeedCRNN(label_set, spectator_mode_set)
-        self.model.load_state_dict(torch.load(os.path.join(model_directory, 'model.pth')))
+        self.model = SideKillFeedCRNN(label_set)
+        spec_dir = os.path.join(model_directory, self.spectator_mode)
+        if os.path.exists(spec_dir):
+            slot_model_path = os.path.join(spec_dir, 'model.pth')
+            print('Using {} kf slot model!'.format(self.spectator_mode))
+        else:
+            slot_model_path = os.path.join(model_directory, 'model.pth')
+            print('Using base kf slot model!')
+        self.model.load_state_dict(torch.load(slot_model_path))
         self.model.eval()
         for p in self.model.parameters():
             p.requires_grad = False
@@ -109,7 +126,8 @@ class KillFeedAnnotator(BaseAnnotator):
                       int(self.params['WIDTH'] * self.resize_factor))
         self.images = Variable(torch.FloatTensor(self.batch_size, 3, int(self.params['HEIGHT'] * self.resize_factor),
                       int(self.params['WIDTH'] * self.resize_factor)).to(device))
-        self.spectator_modes = Variable(torch.LongTensor(self.batch_size).to(device))
+        self.left_colors = Variable(torch.FloatTensor(self.batch_size, 3).to(device))
+        self.right_colors = Variable(torch.FloatTensor(self.batch_size, 3).to(device))
         for s in self.slot_params.keys():
             self.to_predict[s] = np.zeros(self.shape, dtype=np.uint8)
 
@@ -128,7 +146,8 @@ class KillFeedAnnotator(BaseAnnotator):
         cur_kf = {}
         images = None
         show = self.debug
-        spectator_modes = []
+        left_colors = []
+        right_colors = []
         first_empty = False
         for s, params in self.slot_params.items():
 
@@ -142,25 +161,29 @@ class KillFeedAnnotator(BaseAnnotator):
                 #cv2.waitKey()
             #b = time.time()
             image = torch.from_numpy(np.transpose(box, axes=(2, 0, 1))[None]).float().to(self.device)
+            image = ((image / 255) - 0.5) / 0.5
             #print('load exist image', time.time()-b)
             #b = time.time()
             with torch.no_grad():
                 predicteds = self.exists_model({'image': image})
             #print('exist predict', time.time()-b)
-
-            _, predicteds['exist'] = torch.max(predicteds['exist'], 1)
-            label = self.exists_model.sets['exist'][predicteds['exist'][0]]
-            if label == 'empty' and s == 0:
+            d = {}
+            for k, se in self.exists_model.sets.items():
+                _, predicteds[k] = torch.max(predicteds[k], 1)
+                d[k] = se[predicteds[k][0]]
+            if show:
+                print(s, 'exists', d)
+            if d['exist'] == 'empty' and s == 0:
                 continue
-            elif label == 'empty':
+            elif d['exist'] == 'empty':
                 break
-            image = ((image / 255) - 0.5) / 0.5
             if images is None:
                 images = image
             else:
                 images = torch.cat((images, image), 0)
-            spectator_modes.append(self.model.spectator_mode_set.index(self.spectator_mode))
-            if label == 'half_sized':
+            left_colors.append(self.left_color)
+            right_colors.append(self.right_color)
+            if d['size'] == 'half':
                 #show = True
                 shift += int(self.params['HEIGHT']/2)
                 #print(shift)
@@ -168,125 +191,49 @@ class KillFeedAnnotator(BaseAnnotator):
         if images is None:
             return
         #b = time.time()
-        spectator_modes = torch.LongTensor(spectator_modes).to(self.device)
+        left_colors = (((torch.FloatTensor(left_colors) / 255) - 0.5) / 0.5).to(self.device)
+        right_colors = (((torch.FloatTensor(right_colors) / 255) - 0.5) / 0.5).to(self.device)
         loadData(self.images, images)
-        loadData(self.spectator_modes, spectator_modes)
+        loadData(self.left_colors, left_colors)
+        loadData(self.right_colors, right_colors)
 
         batch_size = self.images.size(0)
         #print('load kf ctc image', time.time()-b, batch_size)
         #b = time.time()
         with torch.no_grad():
-            preds = self.model(self.images, self.spectator_modes)
-        #print('kf ctc predict', time.time()-b)
-        #b = time.time()
-        pred_size = preds.size(0)
-
-        _, preds = preds.max(2)
-        preds = preds.transpose(1, 0).contiguous().view(-1)
-        preds = preds.to('cpu')
-        for s in range(batch_size):
-            start_ind = s * pred_size
-            end_ind = (s + 1) * pred_size
-            d = [self.model.label_set[x - 1] for x in preds[start_ind:end_ind] if x != 0]
-            #print(d)
-            #print(s, d)
-            cur_kf[s] = self.convert_kf_ctc_output(d, show=show)
+            cur_kf = self.model.parse_image(self.images, self.left_colors, self.right_colors)
         if cur_kf and show:
             print(cur_kf)
+            cv2.waitKey()
         if cur_kf:
             self.kill_feed.append({'time_point': time_point, 'slots': cur_kf})
         #print('kf ctc decode', time.time()-b)
         #error
         #print('Frame kill feed generation took: ', time.time()-begin)
 
-    def convert_kf_ctc_output(self, ret, show=False):
-        if show:
-            print(ret)
-        data = {'first_hero': 'n/a',
-                'first_color': 'n/a',
-                'assists': [],
-                'ability': 'n/a',
-                'headshot': 'n/a',
-                'second_hero': 'n/a',
-                'second_color': 'n/a'}
-        first_intervals = []
-        second_intervals = []
-        ability_intervals = []
-        for i in ret:
-            if i in ABILITY_SET:
-                ability_intervals.append(i)
-            if not len(ability_intervals):
-                first_intervals.append(i)
-            elif i not in ABILITY_SET:
-                second_intervals.append(i)
-        for i in first_intervals:
-            if i in COLOR_SET + ['nonwhite']:
-                data['first_color'] = i
-            elif i in HERO_SET:
-                data['first_hero'] = i
-            else:
-                if i not in data['assists'] and i.replace('_assist', '') != data['first_hero'] and not i.endswith('npc'):
-                    data['assists'].append(i)
-        for i in ability_intervals:
-            if i.endswith('headshot'):
-                data['headshot'] = True
-                data['ability'] = i.replace(' headshot', '')
-            else:
-                data['ability'] = i
-                data['headshot'] = False
-        for i in second_intervals:
-            i = i.replace('_assist', '')
-            if i in COLOR_SET + ['nonwhite']:
-                data['second_color'] = i
-            elif i.endswith('_npc'):
-                data['second_hero'] = i.replace('_npc', '')
-            elif i in HERO_SET:
-                data['second_hero'] = i
-        if data['first_hero'] != 'n/a':
-            if data['ability'] not in ability_mapping[data['first_hero']]:
-                data['ability'] = 'primary'
-        return data
-
-    def generate_kill_events(self, left_team, right_team):
+    def generate_kill_events(self, left_team, right_team, round_end):
         from copy import deepcopy
-        left_color = left_team.color
-        right_color = right_team.color
-        left_team_white = False
-        if left_color == 'white':
-            left_team_white = True
-        right_team_white = False
-        if right_color == 'white':
-            right_team_white = True
         print('GENERATING KILL FEED')
         possible_events = []
         #print(self.kill_feed)
 
         for ind, k in enumerate(self.kill_feed):
-            for slot in range(6):
-                if slot not in k['slots']:
-                    continue
-                prev_events = []
-                if ind != 0:
-                    if 0 in self.kill_feed[ind - 1]['slots']:
-                        prev_events.append(self.kill_feed[ind - 1]['slots'][0])
-                    for j in range(slot, 0, -1):
-                        if j in self.kill_feed[ind - 1]['slots']:
-                            prev_events.append(self.kill_feed[ind - 1]['slots'][j])
-                e = k['slots'][slot]
+            for e in k['slots']:
 
-                if e['first_hero'] == 'n/a' and len(e['assists']) > 0:
-                    e['first_hero'] = e['assists'][0].replace('_assist', '')
-                    e['assists'] = e['assists'][1:]
+                if e['first_hero'] == 'n/a' and len(e['assisting_heroes']) > 0:
+                    e['first_hero'] = e['assisting_heroes'][0].replace('_assist', '')
+                    e['assisting_heroes'] = e['assisting_heroes'][1:]
                 if e['first_hero'] != 'n/a':
-                    e['first_color'] = convert_colors(e['first_color'], left_color, right_color)
-                    if e['ability'] != 'resurrect' and e['first_color'] == e['second_color']:  # Trust the second color
-                        e['first_color'] = left_color if e['second_color'] == right_color else right_color
-                    if e['first_color'] not in [left_color, right_color]:
-                        continue
-                    if e['first_color'] == left_color:
+                    if e['ability'] == 'resurrect' and e['first_side'] != e['second_side']:  # Trust the first color
+                        e['second_side'] = e['first_side']
+                    #if e['first_color'] not in [left_color, right_color]:
+                    #    continue
+                    if e['first_side'] == 'left':
                         killing_team = left_team
-                    elif e['first_color'] == right_color:
+                    elif e['first_side'] == 'right':
                         killing_team = right_team
+                    else:
+                        continue
                     if not killing_team.has_hero_at_time(e['first_hero'], k['time_point']):
                         continue
                     if e['ability'] not in ['primary', 'melee']:
@@ -298,10 +245,9 @@ class KillFeedAnnotator(BaseAnnotator):
                 else:
                     if e['ability'] != 'primary':
                         continue
-                e['second_color'] = convert_colors(e['second_color'], left_color, right_color)
-                if e['second_color'] == left_color:
+                if e['second_side'] == 'left':
                     dying_team = left_team
-                elif e['second_color'] == right_color:
+                elif e['second_side'] == 'right':
                     dying_team = right_team
 
                 # check if it's a hero or npc
@@ -315,24 +261,22 @@ class KillFeedAnnotator(BaseAnnotator):
                     if not dying_team.has_hero_at_time(hero, k['time_point']):
                         continue
                 add_new = True
-                if e in prev_events:
-                    for p_ind, poss_e in enumerate(possible_events):
-                        if e == poss_e['event'] and poss_e['time_point'] + poss_e['duration'] + 0.5 >= k['time_point']:
-                            possible_events[p_ind]['duration'] = k['time_point'] - poss_e['time_point']
-                            add_new = False
-                            break
+                for p_ind, poss_e in enumerate(possible_events):
+                    if e == poss_e['event'] and poss_e['time_point'] + poss_e['duration'] + 0.5 >= k['time_point']:
+                        possible_events[p_ind]['duration'] = k['time_point'] - poss_e['time_point']
+                        add_new = False
+                        break
                 if add_new:
                     possible_events.append({'time_point': k['time_point'], 'duration': 0, 'event': e})
-        #print(possible_events)
+        print('POSSIBLE', possible_events)
         better_possible_events = []
         for i, p in enumerate(possible_events):
             for j, p2 in enumerate(better_possible_events):
                 p2_end = p2['time_point'] + p2['duration']
-                if close_events(p['event'], p2['event']) and abs(p2_end - p['time_point']) <= 1.5 and p2['duration'] + \
-                        p[
-                            'duration'] < 8:
-                    better_possible_events[j]['duration'] += p['duration']
+                if close_events(p['event'], p2['event']) and abs(p2_end - p['time_point']) <= 3 and \
+                        p2['duration'] + p['duration'] < 8:
                     better_possible_events[j]['event'] = merged_event(p, p2)
+                    better_possible_events[j]['duration'] += p['duration']
                     break
                 elif close_events(p['event'], p2['event']) and p2_end > p['time_point'] > p2['time_point']:
                     break
@@ -359,13 +303,17 @@ class KillFeedAnnotator(BaseAnnotator):
             best_event = None
             print()
             print(de)
+            if de['time_point'] > round_end:
+                continue
             for e in better_possible_events:
                 #print(e)
+                if e['duration'] < 0.5 and round_end - (e['time_point'] + e['duration']) > 1:
+                    continue
                 if e['event']['second_hero'] != de['hero']:
                     continue
-                if e['event']['second_color'] != de['color']:
+                if e['event']['second_side'] != de['side']:
                     continue
-                if e['event']['first_color'] == de['color']:
+                if e['event']['first_side'] == de['side']:
                     continue
                 dist = abs(e['time_point'] - de['time_point'])
                 if dist < best_distance:
@@ -377,13 +325,14 @@ class KillFeedAnnotator(BaseAnnotator):
                 if de['hero'] is not None:
                     actual_events.append({'time_point': de['time_point'],
                                           'event': {'first_hero': 'n/a',
+                                                    'first_side': 'n/a',
                                                     'ability': 'n/a',
-                                                    'second_color': de['color'],
+                                                    'second_side': de['side'],
                                                     'second_hero': de['hero']}})
                 continue
             if de['time_point'] < best_event['time_point']:
                 best_event['time_point'] = de['time_point']
-            integ = (best_event['time_point'], best_event['event']['second_hero'], best_event['event']['second_color'])
+            integ = (best_event['time_point'], best_event['event']['second_hero'], best_event['event']['second_side'])
             print(best_event)
             print(integ, integ in integrity_check, integrity_check)
             if integ in integrity_check:
@@ -395,14 +344,14 @@ class KillFeedAnnotator(BaseAnnotator):
             if e['event']['second_hero'] in npc_set or \
                     (e['event']['second_hero'] in deniable_ults and e['event']['ability'] in denying_abilities):
                 for ne in npc_events:
-                    if ne['duration'] < 1:
+                    if ne['duration'] < 0.6:
                         continue
                     if close_events(ne['event'], e['event']):
                         if e['time_point'] + e['duration'] < ne['time_point'] + 7.3 and ne['duration'] < 7.5:
                             ne['duration'] = e['time_point'] + e['duration'] - ne['time_point']
                             break
                 else:
-                    integ = (e['time_point'], e['event']['second_hero'], e['event']['second_color'])
+                    integ = (e['time_point'], e['event']['second_hero'], e['event']['second_side'])
                     if integ in integrity_check:
                         continue
                     npc_events.append(e)
@@ -414,17 +363,21 @@ class KillFeedAnnotator(BaseAnnotator):
         for e in npc_events:
             actual_events.append(e)
             if e['event']['second_hero'] == 'mech':
-                self.mech_deaths.append({'time_point': e['time_point'], 'color': e['event']['second_color']})
+                self.mech_deaths.append({'time_point': e['time_point'], 'side': e['event']['second_side']})
             #print(time.strftime('%M:%S', time.gmtime(e['time_point'])), e)
         print('REVIVES')
+        self.dva_revive_events = []
         for i, e in enumerate(better_possible_events):
             if e['event']['ability'] == 'resurrect' and e['duration'] > 0:
                 print(e)
-                integ = (round(e['time_point'], 1), e['event']['second_hero'], e['event']['second_color'])
+                integ = (round(e['time_point'], 1), e['event']['second_hero'], e['event']['second_side'])
                 print(integ, integ in integrity_check)
                 if integ in integrity_check:
                     continue
                 actual_events.append(e)
+                if e['event']['second_hero'] == 'd.va':
+                    self.dva_revive_events.append({'time_point': e['time_point'], 'side': e['event']['second_side']})
+
                 integrity_check.add(integ)
                 #print(time.strftime('%M:%S', time.gmtime(e['time_point'])), e)
 

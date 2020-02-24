@@ -9,24 +9,28 @@ import numpy as np
 
 
 class CTCHDF5Dataset(Dataset):
-    def __init__(self, train_dir, batch_size, blank_ind, pre='train', recent=False, get_time_point=False):
-        self.get_time_point = get_time_point
+    def __init__(self, train_dir, batch_size, blank_ind, pre='train', modes=None):
+        if modes is None:
+            modes = ['original']
         self.pre = pre
         self.batch_size = batch_size
         self.blank_ind = blank_ind
         self.data_num = 0
         self.data_indices = {}
+        self.get_time_point = False
         count = 0
-        for f in os.listdir(train_dir):
-            if f.endswith('.hdf5'):
-                if recent and int(f.replace('.hdf5', '')) < 9400:
-                    continue
-                with h5py.File(os.path.join(train_dir, f), 'r') as h5f:
-                    self.data_num += h5f['{}_img'.format(self.pre)].shape[0]
-                    self.data_indices[self.data_num] = os.path.join(train_dir, f)
-                count += 1
-                #if count > 2:
-                #    break
+        for m in modes:
+            m_dir = os.path.join(train_dir, m)
+            if not os.path.exists(m_dir):
+                continue
+            for f in os.listdir(m_dir):
+                if f.endswith('.hdf5') and 'exist' not in f:
+                    with h5py.File(os.path.join(m_dir, f), 'r') as h5f:
+                        self.data_num += h5f['{}_img'.format(self.pre)].shape[0]
+                        self.data_indices[self.data_num] = os.path.join(m_dir, f)
+                    count += 1
+                    #if count > 1:
+                    #    break
         self.weights = {}
         print('DONE SETTING UP')
 
@@ -54,7 +58,7 @@ class CTCHDF5Dataset(Dataset):
     def __getitem__(self, index):
         start_ind = 0
         real_index = index * self.batch_size
-        for i, (next_ind, v) in enumerate(self.data_indices.items()):
+        for file_index, (next_ind, v) in enumerate(self.data_indices.items()):
             path = v
             if real_index < next_ind:
                 break
@@ -70,15 +74,14 @@ class CTCHDF5Dataset(Dataset):
             lengths = hf5["{}_label_sequence_length".format(self.pre)][real_index:real_index+self.batch_size]
             im = hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             rd = hf5['{}_round'.format(self.pre)][real_index:real_index+self.batch_size, ...]
-            specs = hf5['{}_spectator_mode_label'.format(self.pre)][real_index:real_index+self.batch_size, ...]
             labs = hf5["{}_label_sequence".format(self.pre)][real_index:real_index+self.batch_size, ...].astype(np.int16)
 
+            #lengths[lengths > self.max_length] = self.max_length
             # For removing all blank images
             inds = lengths != 1
 
             im = im[inds]
             rd = rd[inds]
-            specs = specs[inds]
             labs = labs[inds]
             lengths = lengths[inds]
 
@@ -99,25 +102,23 @@ class CTCHDF5Dataset(Dataset):
                 tp = tp[inds]
                 inputs['time_point'] = torch.from_numpy(tp).float()
             inputs['image']= torch.from_numpy(im).float()
-            inputs['spectator_mode'] = torch.from_numpy(specs).long()
             inputs['round'] = torch.from_numpy(rd).long()
             outputs['the_labels'] = torch.from_numpy(labs).long()
             outputs['label_length'] = torch.from_numpy(lengths).long()
         if next_file:
             from_next = end - next_ind
-            next_path = list(self.data_indices.values())[i+1]
+            next_path = list(self.data_indices.values())[file_index+1]
             with h5py.File(next_path, 'r') as hf5:
                 lengths = hf5["{}_label_sequence_length".format(self.pre)][0:from_next]
                 im= hf5['{}_img'.format(self.pre)][0:from_next, ...]
                 rd= hf5['{}_round'.format(self.pre)][0:from_next, ...]
-                specs= hf5['{}_spectator_mode_label'.format(self.pre)][0:from_next, ...]
                 labs = hf5["{}_label_sequence".format(self.pre)][0:from_next, ...].astype(np.int16)
+                #lengths[lengths > self.max_length] = self.max_length
                 # For removing all blank images
                 inds = lengths != 1
 
                 im = im[inds]
                 rd = rd[inds]
-                specs = specs[inds]
                 labs = labs[inds]
                 lengths = lengths[inds]
 
@@ -138,7 +139,6 @@ class CTCHDF5Dataset(Dataset):
                     tp = tp[inds]
                     inputs['time_point'] = torch.cat((inputs['time_point'], torch.from_numpy(tp).float()), 0)
                 inputs['image' ]= torch.cat((inputs['image'], torch.from_numpy(im).float()), 0)
-                inputs['spectator_mode'] = torch.cat((inputs['spectator_mode'], torch.from_numpy(specs).long()), 0)
                 inputs['round'] = torch.cat((inputs['round'], torch.from_numpy(rd).long()), 0)
 
                 outputs['the_labels'] = torch.cat((outputs['the_labels'], torch.from_numpy(labs).long()), 0)
@@ -148,6 +148,92 @@ class CTCHDF5Dataset(Dataset):
             return inputs, outputs, torch.from_numpy(np.array(weights)).float()
         return inputs, outputs
 
+
+class KillFeedDataset(CTCHDF5Dataset):
+    def __getitem__(self, index):
+        start_ind = 0
+        real_index = index * self.batch_size
+        for i, (next_ind, v) in enumerate(self.data_indices.items()):
+            path = v
+            if real_index < next_ind:
+                break
+            start_ind = next_ind
+
+        end = real_index + self.batch_size
+        next_file = end > next_ind
+        real_index = real_index - start_ind
+        inputs = {}
+        outputs = {}
+        weights = []
+        with h5py.File(path, 'r') as hf5:
+            lengths = hf5["{}_label_sequence_length".format(self.pre)][real_index:real_index+self.batch_size]
+            im = hf5['{}_img'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            lc = hf5['{}_left_color'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            rc = hf5['{}_right_color'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            rd = hf5['{}_round'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            tp = hf5['{}_time_point'.format(self.pre)][real_index:real_index+self.batch_size, ...]
+            labs = hf5["{}_label_sequence".format(self.pre)][real_index:real_index+self.batch_size, ...].astype(np.int16)
+
+            # For removing all blank images
+            inds = lengths != 1
+
+            im = im[inds]
+            lc = lc[inds]
+            rc = rc[inds]
+            rd = rd[inds]
+            tp = tp[inds]
+            labs = labs[inds]
+            lengths = lengths[inds]
+
+            labs[labs > self.blank_ind] = self.blank_ind
+
+            labs = labs.reshape(labs.shape[0] * labs.shape[1])
+            labs = labs[labs != self.blank_ind]
+            labs += 1
+            inputs['image']= torch.from_numpy(im).float()
+            inputs['left_color'] = torch.from_numpy(lc).float()
+            inputs['right_color']= torch.from_numpy(rc).float()
+            inputs['round'] = torch.from_numpy(rd).long()
+            inputs['time_point'] = torch.from_numpy(tp).float()
+            outputs['the_labels'] = torch.from_numpy(labs).long()
+            outputs['label_length'] = torch.from_numpy(lengths).long()
+        if next_file:
+            from_next = end - next_ind
+            next_path = list(self.data_indices.values())[i+1]
+            with h5py.File(next_path, 'r') as hf5:
+                lengths = hf5["{}_label_sequence_length".format(self.pre)][0:from_next]
+                im= hf5['{}_img'.format(self.pre)][0:from_next, ...]
+                lc= hf5['{}_left_color'.format(self.pre)][0:from_next, ...]
+                rc= hf5['{}_right_color'.format(self.pre)][0:from_next, ...]
+                rd= hf5['{}_round'.format(self.pre)][0:from_next, ...]
+                tp= hf5['{}_time_point'.format(self.pre)][0:from_next, ...]
+                labs = hf5["{}_label_sequence".format(self.pre)][0:from_next, ...].astype(np.int16)
+                # For removing all blank images
+                inds = lengths != 1
+
+                im = im[inds]
+                lc = lc[inds]
+                rc = rc[inds]
+                rd = rd[inds]
+                tp = tp[inds]
+                labs = labs[inds]
+                lengths = lengths[inds]
+
+                labs[labs > self.blank_ind] = self.blank_ind
+                labs = labs.reshape(labs.shape[0] * labs.shape[1])
+                labs = labs[labs != self.blank_ind]
+                labs += 1
+                inputs['image']= torch.cat((inputs['image'], torch.from_numpy(im).float()), 0)
+                inputs['left_color']= torch.cat((inputs['left_color'], torch.from_numpy(lc).float()), 0)
+                inputs['right_color']= torch.cat((inputs['right_color'], torch.from_numpy(rc).float()), 0)
+                inputs['round'] = torch.cat((inputs['round'], torch.from_numpy(rd).long()), 0)
+                inputs['time_point'] = torch.cat((inputs['time_point'], torch.from_numpy(tp).float()), 0)
+                outputs['the_labels'] = torch.cat((outputs['the_labels'], torch.from_numpy(labs).long()), 0)
+                outputs['label_length'] = torch.cat((outputs['label_length'], torch.from_numpy(lengths).long()), 0)
+        inputs['image'] = ((inputs['image'] / 255) - 0.5) / 0.5
+        inputs['left_color'] = ((inputs['left_color'] / 255) - 0.5) / 0.5
+        inputs['right_color'] = ((inputs['right_color'] / 255) - 0.5) / 0.5
+        return inputs, outputs
 
 class LabelConverter(object):
     """Convert between str and label.

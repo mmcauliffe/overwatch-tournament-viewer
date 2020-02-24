@@ -9,7 +9,7 @@ from annotator.config import na_lab
 
 
 class CTCDataGenerator(DataGenerator):
-    max_sequence_length = 12
+    max_sequence_length = 36
 
     def __init__(self):
         super(CTCDataGenerator, self).__init__()
@@ -39,10 +39,9 @@ class CTCDataGenerator(DataGenerator):
 
     def save_label_set(self):
         path = os.path.join(self.training_directory, 'labels_set.txt')
-        if not os.path.exists(path):
-            with open(path, 'w', encoding='utf8') as f:
-                for c in self.label_set:
-                    f.write('{}\n'.format(c))
+        with open(path, 'w', encoding='utf8') as f:
+            for c in self.label_set:
+                f.write('{}\n'.format(c))
 
     def add_new_round_info(self, r):
         self.current_round_id = r['id']

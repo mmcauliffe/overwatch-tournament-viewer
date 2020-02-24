@@ -13,6 +13,10 @@ TRAIN_INFO = get_train_info()
 
 MAP_SET = TRAIN_INFO['maps']
 
+SUBMAP_SET = TRAIN_INFO['submaps']
+
+GAME_SET = TRAIN_INFO['game']
+
 HERO_SET = TRAIN_INFO['heroes']
 
 LABEL_SET = TRAIN_INFO['kill_feed_labels']

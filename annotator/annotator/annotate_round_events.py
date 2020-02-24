@@ -7,26 +7,27 @@ import torch
 import itertools
 import time
 from collections import defaultdict, Counter
-from annotator.annotator.classes import InGameAnnotator, MidAnnotator, PlayerNameAnnotator, PlayerStatusAnnotator, \
-    KillFeedAnnotator, ReplayAnnotator, PauseAnnotator, PlayerRNNAnnotator
+from annotator.config import offsets
+from annotator.annotator.classes import MidAnnotator, PlayerStatusAnnotator, \
+    KillFeedAnnotator, PlayerRNNAnnotator
 
-from annotator.utils import get_local_vod, \
+from annotator.utils import get_local_vod, get_duration, \
     get_local_path,  FileVideoStream, Empty, get_vod_path
 from annotator.api_requests import get_annotate_vods_round_events, upload_annotated_round_events, get_team
 
-working_dir = r'E:\Data\Overwatch\models'
+working_dir = r'N:\Data\Overwatch\models'
 player_rnn_dir = os.path.join(working_dir, 'player_rnn')
-player_model_dir = os.path.join(working_dir, 'player_status')
+player_model_dir = os.path.join(working_dir, 'player_status_test')
 player_ocr_model_dir = os.path.join(working_dir, 'player_ocr')
-kf_ctc_model_dir = os.path.join(working_dir, 'kill_feed_ctc')
+kf_ctc_model_dir = os.path.join(working_dir, 'kill_feed_ctc_test')
 kf_exists_model_dir = os.path.join(working_dir, 'kill_feed_exists')
 game_model_dir = os.path.join(working_dir, 'game')
 mid_model_dir = os.path.join(working_dir, 'mid')
 replay_model_dir = os.path.join(working_dir, 'replay')
 pause_model_dir = os.path.join(working_dir, 'pause')
 
-annotation_dir = r'E:\Data\Overwatch\annotations'
-oi_annotation_dir = r'E:\Data\Overwatch\oi_annotations'
+annotation_dir = r'N:\Data\Overwatch\annotations'
+oi_annotation_dir = r'N:\Data\Overwatch\oi_annotations'
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #device = torch.device("cpu")
 spec_modes = {'O': 'Original',
@@ -34,7 +35,12 @@ spec_modes = {'O': 'Original',
         "L":"overwatch league",
               'C': 'Contenders'}
 
+sides = {'N': 'neither',
+         'L': 'left',
+         'R': 'right'}
+
 use_status_rnn = False
+debug = False
 
 def predict_on_video(v, r):
     import time
@@ -55,33 +61,50 @@ def predict_on_video(v, r):
         player_names[('right', p['player_index'])] = player_mapping[p['player']]
     left_color = r['game']['left_team']['color'].lower()
     right_color = r['game']['right_team']['color'].lower()
-    spec = spec_modes[r['game']['match']['event']['spectator_mode']].lower()
-    film_format = v['film_format']
-    print(film_format)
-    debug = False
+    left_color_hex = r['game']['left_team_color_hex'].lstrip('#')
+    right_color_hex = r['game']['right_team_color_hex'].lstrip('#')
+    left_color_hex = tuple(int(left_color_hex[i:i+2], 16) for i in (0, 2, 4))
+    right_color_hex = tuple(int(right_color_hex[i:i+2], 16) for i in (0, 2, 4))
+    spec = r['game']['match']['event']['spectator_mode']['name'].lower()
+    map = r['game']['map']['name'].lower()
+    attacking_side = sides[r['attacking_side']]
+    print(v['film_format'])
+    film_format = v['film_format']['code']
     if use_status_rnn:
         status_annotator = PlayerRNNAnnotator(film_format, player_rnn_dir, device, left_color, right_color, player_names, spectator_mode=spec)
     else:
-        status_annotator = PlayerStatusAnnotator(film_format, player_model_dir, device, left_color, right_color, player_names, spectator_mode=spec, debug=debug)
+        status_annotator = PlayerStatusAnnotator(film_format, player_model_dir, device, left_color_hex, right_color_hex, player_names, spectator_mode=spec, debug=debug)
     status_annotator.get_zooms(r)
     #name_annotator = PlayerNameAnnotator(v['film_format'], player_ocr_model_dir, device)
-    kill_feed_annotator = KillFeedAnnotator(film_format, kf_ctc_model_dir, kf_exists_model_dir, device, spectator_mode=spec, debug=debug)
-    mid_annotator = MidAnnotator(film_format, mid_model_dir, device, debug=debug)
-    for s in r['sequences']:
-        print(s)
+    kill_feed_annotator = KillFeedAnnotator(film_format, kf_ctc_model_dir, kf_exists_model_dir, device,
+                                            left_color_hex, right_color_hex,spectator_mode=spec, debug=debug)
+    mid_annotator = MidAnnotator(film_format, mid_model_dir, device, spec, map, attacking_side, debug=debug)
+
+    actual_duration, mode = get_duration(r['stream_vod'])
+
+    offset = None
+    if r['stream_vod']['id'] in offsets:
+        offset = offsets[r['stream_vod']['id']]
+    for beg, end in r['sequences']:
+        print(beg, end)
+        if end <= beg:
+            continue
         time_step = 0.1
-        fvs = FileVideoStream(get_vod_path(v), s[0] + r['begin'], s[1] + r['begin'], time_step, real_begin=r['begin']).start()
+        fvs = FileVideoStream(get_vod_path(v), beg + r['begin'], end + r['begin'], time_step, real_begin=r['begin'],
+                              offset=offset, actual_duration=actual_duration, mode=mode).start()
         time.sleep(5)
         frame_ind = 0
-        status_annotator.reset(s[0])
-        mid_annotator.reset(s[0])
+        status_annotator.reset(beg)
+        mid_annotator.reset(beg)
         while True:
             try:
-                frame, time_point = fvs.read()
+                data, time_point = fvs.read()
             except Empty:
                 break
+            frame = data['frame']
             if time_point % (status_annotator.time_step * status_annotator.batch_size) == 0:
                 print(time_point)
+
             if time_step == status_annotator.time_step or frame_ind % (status_annotator.time_step / time_step) == 0:
                 status_annotator.process_frame(frame, time_point)
             kill_feed_annotator.process_frame(frame, time_point)
@@ -95,7 +118,8 @@ def predict_on_video(v, r):
     #print(name_annotator.names)
     #statuses = status_annotator.generate_statuses()
     left_team, right_team = status_annotator.generate_teams()
-    kill_feed_events = kill_feed_annotator.generate_kill_events(left_team, right_team)
+    kill_feed_events = kill_feed_annotator.generate_kill_events(left_team, right_team, round(r['end'] - r['begin'], 1))
+
     print(kill_feed_events)
     if False:
         for s, status in statuses.items():
@@ -117,7 +141,7 @@ def predict_on_video(v, r):
             print(k)
             data_player_states[k] = {}
             switches = v.generate_switches()
-            ultimates = v.generate_ults(mech_deaths=kill_feed_annotator.mech_deaths)
+            ultimates = v.generate_ults(mech_deaths=kill_feed_annotator.mech_deaths, revive_events=kill_feed_annotator.dva_revive_events, sequences=r['sequences'])
             data_player_states[k]['player_name'] = v.name
             data_player_states[k]['switches'] = switches
             data_player_states[k]['ultimates'] = ultimates
@@ -144,37 +168,6 @@ def predict_on_video(v, r):
     return statuses
 
 
-def get_sequences(v, r):
-    film_format = r['game']['match']['event']['film_format']
-    replay_annotator = ReplayAnnotator(film_format, replay_model_dir, device)
-    pause_annotator = PauseAnnotator(film_format, pause_model_dir, device)
-    time_step = 1
-    fvs = FileVideoStream(get_vod_path(v), r['begin'], r['end'], time_step, real_begin=r['begin']).start()
-    time.sleep(5)
-    while True:
-        try:
-            frame, time_point = fvs.read()
-        except Empty:
-            break
-        replay_annotator.process_frame(frame, time_point)
-        pause_annotator.process_frame(frame, time_point)
-    replay_annotator.annotate()
-    pause_annotator.annotate()
-    replays = replay_annotator.generate_replays()
-    pauses = pause_annotator.generate_pauses()
-    sequences = []
-    last_start = 0
-    for r in sorted(replays + pauses, key= lambda x: x['begin']):
-        sequences.append({'begin': last_start, 'end': r['begin']})
-        last_start = r['end']
-    if not sequences:
-        sequences = [{'begin': 0, 'end': r['end'] - r['begin']}]
-    else:
-        sequences.append({'begin': last_start, 'end': r['end'] - r['begin']})
-    smaller_windows = [] # FIXME
-    return replays, pauses, smaller_windows, sequences
-
-
 def analyze_rounds(vods):
     import random
     #random.seed(1234)
@@ -182,10 +175,16 @@ def analyze_rounds(vods):
     annotation_dir = os.path.join(oi_annotation_dir, 'annotations')
     random.shuffle(vods)
     for i, v in enumerate(vods):
+        #if "VAL" not in v['title']:
+        #    continue
         print(i, v)
         random.shuffle(v['rounds'])
         for r in v['rounds']:
-            #if r['id'] != 10411:
+            #if r['spectator_mode'].lower() != 'overwatch league season 3':
+            #    continue
+            #if r['id'] < 15025:
+            #    continue
+            #if r['id'] != 15311:
             #    continue
             print(r)
             print(r['begin'], r['end'])
@@ -223,7 +222,7 @@ def analyze_rounds(vods):
             print(resp)
             if not resp['success']:
                 error
-            error
+            #error
             #break
 
 def vod_main():

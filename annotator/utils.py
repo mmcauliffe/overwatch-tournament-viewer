@@ -8,7 +8,6 @@ from queue import Queue, Empty
 import cv2
 
 import annotator.config as config
-from annotator.game_values import STATUS_SET
 
 def get_local_file(r):
     directory = config.vod_directory
@@ -27,9 +26,24 @@ def get_local_vod(v):
     out_template = '{}.%(ext)s'.format(v['id'])
     print('DOWNLOADING', v)
     subprocess.call(['youtube-dl', '-F', v['url'], ], cwd=directory)
-    for f in ['720p', '720p60' '720p30', '22', 'best']:
+    for f in ['720p', '720p30', '720p60', '22', 'best']:
+        print('Getting {}'.format(f))
         subprocess.call(['youtube-dl', v['url'], '-o', out_template, '-f', f], cwd=directory)
+        if os.path.exists(get_vod_path(v)):
+            break
 
+
+def check_vod_resolution(v):
+    t = subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                     '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', get_vod_path(v)])
+    t = t.decode('utf8').strip()
+    if t != '1280x720':
+
+        temp_path = os.path.join(config.vod_directory, '{}_temp.mp4'.format(v['id']))
+        if not os.path.exists(temp_path):
+            subprocess.call(['ffmpeg', '-i', get_vod_path(v), '-r', '29.97', '-vf', 'scale=1280:720', temp_path])
+        os.remove(get_vod_path(v))
+        os.rename(temp_path, get_vod_path(v))
 
 def calculate_hero_boundaries(player_name):
     value = 0
@@ -101,6 +115,7 @@ def get_local_path(r):
 
 
 def look_up_player_state(side, index, time, states, has_status=True):
+    from annotator.game_values import STATUS_SET
     states = states[side][str(index)]
 
     data = {}
@@ -135,7 +150,7 @@ def look_up_player_state(side, index, time, states, has_status=True):
         ind -= 1
     data['hero'] = states['hero'][ind]['hero']['name'].lower()
     data['switch'] = 'not_switch'
-    if states['hero'][ind]['begin']!= 0 and time - states['hero'][ind]['begin'] < 1.2:
+    if states['hero'][ind]['begin'] != 0 and time - states['hero'][ind]['begin'] < 1.2:
         data['switch'] = 'switch'
     data['player'] = states['player'].lower()
     return data
@@ -265,35 +280,74 @@ class FileVideoStreamRange:
         return self.Q.qsize() > 0
 
 
+def get_duration(v):
+    import isodate
+    import datetime
+    print(v['vod_link'])
+    id = v['vod_link'][1]
+    try:
+        if v['channel']['site'] == 'Y':
+            key = 'AIzaSyCXLyL759IdUXcmettlS0nPbVEmlCIIloM'
+            url = 'https://www.googleapis.com/youtube/v3/videos?part=contentDetails&key={}&id={}'.format(
+                                    key, id)
+            response = requests.get(url)
+            data = response.json()
+            print(data)
+            duration = isodate.parse_duration(data['items'][0]['contentDetails']['duration']).total_seconds()
+            mode = 'percent'
+        else:
+            print(id)
+            response = requests.get('https://api.twitch.tv/helix/videos?id={}'.format(id),
+                                    headers={'Client-ID': 'fgjp7t0f365uazgs84n7t9xhf19xt2'})
+            data = response.json()['data'][0]
+            try:
+                time = datetime.datetime.strptime(data['duration'], '%Hh%Mm%Ss')
+            except ValueError:
+                time = datetime.datetime.strptime(data['duration'], '%Mm%Ss')
+            duration = time.hour *3600 + time.minute * 60 + time.second
+            mode = 'percent'
+    except KeyError:
+        duration, mode = None, None
+    return duration, mode
+
+
+
 class FileVideoStream(object):
-    def __init__(self, path, begin, end, time_step, queueSize=100, short_time_steps=None, real_begin=None):
+    def __init__(self, path, begin, end, time_step, queueSize=100, special_time_steps=None, real_begin=None,
+                 use_window=False, actual_duration=None, mode='percent', offset=None):
         # initialize the file video stream along with the boolean
         # used to indicate if the thread should be stopped or not
         print(path)
+        self.mode = mode
+        self.offset = offset
+        self.actual_duration = actual_duration
+        self.use_window = use_window
         self.stream = cv2.VideoCapture(path)
-        self.short_time_steps = short_time_steps
-        if self.short_time_steps is None:
-            self.short_time_steps = []
+        self.special_time_steps = special_time_steps
+        if self.special_time_steps is None:
+            self.special_time_steps = {}
+        print('TIMESTEPS', self.special_time_steps)
         self.fps = round(self.stream.get(cv2.CAP_PROP_FPS), 2)
         self.stopped = False
         self.begin = round(begin, 1)
         self.end = end
         self.frame_shift = 0
         self.ms_shift = 53
-        for p in ['2288', '2287']:
-            if p in path:
-                self.frame_shift = 10
-                self.ms_shift = 400
-                break
+        self.ms_shift = 0
         if self.end == 0:
             self.end = int(self.stream.get(cv2.CAP_PROP_FRAME_COUNT) / self.fps) - 5
         self.stream.set(cv2.CAP_PROP_POS_AVI_RATIO, 1)
-        print('DURATION', self.stream.get(cv2.CAP_PROP_POS_MSEC))
+        self.prev = None
+        self.current = None
+        self.next = None
+        self.duration = self.stream.get(cv2.CAP_PROP_POS_MSEC) / 1000
+        print('DURATION', self.duration, self.actual_duration)
+        if self.actual_duration and self.actual_duration - self.duration > 2:
+            self.offset = 0.1
         self.time_step = time_step
         self.real_begin = real_begin
         if self.real_begin is not None:
             self.real_begin = round(real_begin, 1)
-
 
         # initialize the queue used to store frames read from
         # the video file
@@ -320,34 +374,111 @@ class FileVideoStream(object):
             if not self.Q.full():
                 # read the next frame from the file
                 time_point = round(time_point, 1)
-                #print(self.begin, time_point)
-                frame_number = int(time_point * self.fps)
+                if self.offset:
+                    actual_time_point = time_point - self.offset
+                    frame_number = int(actual_time_point * self.fps)
+                elif self.actual_duration:
+                    if False and self.actual_duration - self.duration > 2:
+                        actual_time_point = time_point / self.actual_duration
+                        actual_time_point *= int(self.duration)
+                        #print(time_point, actual_time_point)
+                        #print(self.duration,  self.actual_duration)
+                    elif self.duration - self.actual_duration > 2:
+                        diff = self.duration - self.actual_duration
+                        actual_time_point = time_point + diff
+                    else:
+                        actual_time_point = time_point
+                    frame_number = int(actual_time_point * self.fps)
+                else:
+                    #print(self.begin, time_point)
+                    frame_number = int(time_point * self.fps)
+                    actual_time_point = time_point
+                actual_time_point = round(actual_time_point, 1)
+                if actual_time_point < 0:
+                    ts = self.time_step
+                    if self.special_time_steps:
+                        found = False
+                        for k, intervals in self.special_time_steps.items():
+                            for interval in intervals:
+                                if interval['begin'] <= time_point < interval['end']:
+                                    ts = k
+                                    if time_point + ts > interval['end']:
+                                        time_point = interval['end'] - ts
+                                    found = True
+                                    break
+                            if found:
+                                break
+                    time_point += ts
+                    print(time_point)
+                    continue
                 frame_number -= self.frame_shift
                 if frame_number >= self.stream.get(cv2.CAP_PROP_FRAME_COUNT):
                     self.stop()
                     return
                 #self.stream.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-                self.stream.set(cv2.CAP_PROP_POS_MSEC, int(time_point*1000)-self.ms_shift)
-                (grabbed, frame) = self.stream.read()
+
                 # if the `grabbed` boolean is `False`, then we have
                 # reached the end of the video file
-                if not grabbed:
-                    self.stop()
-                    return
+                if not self.use_window:
+                    self.stream.set(cv2.CAP_PROP_POS_MSEC, int(actual_time_point*1000)-self.ms_shift)
+                    data = {}
+                    (grabbed, data['frame']) = self.stream.read()
+                    if not grabbed:
+                        self.stop()
+                        return
+                else:
+                    if self.time_step > 0.1:
+                        self.stream.set(cv2.CAP_PROP_POS_MSEC, int(time_point*1000)-self.ms_shift)
+                        (grabbed, frame) = self.stream.read()
+                        if not grabbed:
+                            self.stop()
+                            return
+                        data = {'frame': frame}
+                        self.stream.set(cv2.CAP_PROP_POS_MSEC, int(round(time_point-0.1, 1)*1000)-self.ms_shift)
+                        (grabbed, prev) = self.stream.read()
+                        data['prev'] = prev
+                        self.stream.set(cv2.CAP_PROP_POS_MSEC, int(round(time_point+0.1, 1)*1000)-self.ms_shift)
+                        (grabbed, next) = self.stream.read()
+                        data['next'] = next
+                    else:
+                        if self.current is None:
+                            self.stream.set(cv2.CAP_PROP_POS_MSEC, int(time_point*1000)-self.ms_shift)
+                            (grabbed, self.current) = self.stream.read()
+                            if not grabbed:
+                                self.stop()
+                                return
+                        if self.prev is None:
+                            self.stream.set(cv2.CAP_PROP_POS_MSEC, int(round(time_point-0.1, 1)*1000)-self.ms_shift)
+                            (grabbed, self.prev) = self.stream.read()
+                        if self.next is None:
+                            self.stream.set(cv2.CAP_PROP_POS_MSEC, int(round(time_point+0.1, 1)*1000)-self.ms_shift)
+                            (grabbed, self.next) = self.stream.read()
+                        data = {'frame': self.current, 'prev': self.prev, 'next': self.next}
+
 
                 # add the frame to the queue
                 if self.real_begin is not None:
                     beg = self.real_begin
                 else:
                     beg = self.begin
-                self.Q.put((frame, round(time_point - beg, 1)))
+                self.Q.put((data, round(time_point - beg, 1)))
+                if self.time_step == 0.1:
+                    self.prev = self.current
+                    self.current = self.next
+                    self.next = None
                 ts = self.time_step
-                if self.short_time_steps:
-                    for interval in self.short_time_steps:
-                        if interval['begin'] <= time_point <= interval['end']:
-                            ts = 0.1
+                if self.special_time_steps:
+                    found = False
+                    for k, intervals in self.special_time_steps.items():
+                        for interval in intervals:
+                            if interval['begin'] <= time_point < interval['end']:
+                                ts = k
+                                if time_point + ts > interval['end']:
+                                    time_point = interval['end'] - ts
+                                found = True
+                                break
+                        if found:
                             break
-
                 time_point += ts
                 frame_ind += 1
                 if time_point >= self.end:

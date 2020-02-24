@@ -66,8 +66,15 @@ def get_ability_list():
     resp = r.json()
     for a in resp:
         ability_set.add(a['name'].lower())
-    ability_set.add('defense matrix')
+    url = config.api_url + 'abilities/denying_abilities/'
+    r = requests.get(url)
+    resp = r.json()
+    for a in resp:
+        ability_set.add(a['name'].lower())
+    #ability_set.add('defense matrix')
+    #ability_set.add('kinetic grasp')
     return ability_set
+
 
 def get_kill_feed_info():
     url = config.api_url + 'abilities/deniable_abilities/'
@@ -113,10 +120,17 @@ def get_train_info():
     return data
 
 
-def get_train_rounds():
-    url = config.api_url + 'train_rounds/'
-    r = requests.get(url)
-    rounds = r.json()
+def get_train_rounds(round=None, spectator_mode=None):
+    if round is None:
+        url = config.api_url + 'train_rounds/'
+        if spectator_mode is not None:
+            url += '?spectator_mode=' + spectator_mode
+        r = requests.get(url)
+        rounds = r.json()
+    else:
+        url = config.api_url + 'train_rounds/{}/'.format(round)
+        r = requests.get(url)
+        rounds = [r.json()]
     print('Total number of rounds:', len(rounds))
     return rounds
 
@@ -135,10 +149,28 @@ def get_train_rounds_plus():
     return r.json()
 
 
-def get_train_vods():
-    url = config.api_url + 'train_vods/'
-    r = requests.get(url)
-    return r.json()
+def get_vods(vod=None):
+    if vod is None:
+        url = config.api_url + 'vods/'
+        r = requests.get(url)
+        vods = r.json()
+    else:
+        url = config.api_url + 'vods/{}/'.format(vod)
+        r = requests.get(url)
+        vods = [r.json()]
+    return vods
+
+
+def get_train_vods(vod=None):
+    if vod is None:
+        url = config.api_url + 'train_vods/'
+        r = requests.get(url)
+        vods = r.json()
+    else:
+        url = config.api_url + 'train_vods/{}/'.format(vod)
+        r = requests.get(url)
+        vods = [r.json()]
+    return vods
 
 
 def get_annotate_rounds():
@@ -157,6 +189,7 @@ def get_event(id):
     url = config.api_url + 'events/{}/'.format(id)
     r = requests.get(url)
     return r.json()
+
 
 def get_team(id):
     url = config.api_url + 'teams/{}/'.format(id)
@@ -228,16 +261,22 @@ def get_matches(event_id):
     data = r.json()
     return data
 
+
 def get_match_stats(match_id):
-    url = config.api_url + 'matches/{}/stats/'.format(match_id)
+    url = config.api_url + 'matches/{}/stats/?all_stats=True'.format(match_id)
     r = requests.get(url)
     data = r.json()
     return data
 
+
 def get_kf_events(round_id):
     url = config.api_url + 'rounds/{}/kill_feed_items/'.format(round_id)
     r = requests.get(url)
-    events = r.json()
+    try:
+        events = r.json()
+    except:
+        print(r)
+        raise
     for e in events:
         for k, v in e.items():
             if isinstance(v, str):

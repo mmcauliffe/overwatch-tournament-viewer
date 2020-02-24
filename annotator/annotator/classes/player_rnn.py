@@ -104,7 +104,8 @@ class PlayerRNNAnnotator(PlayerStatusAnnotator):
                 for t_ind in range(self.process_index - 1):
                     #cv2.imshow('frame_{}'.format(t_ind), np.transpose(self.to_predict[s][t_ind], axes=(1, 2, 0)))
                     current_time = self.begin_time + (t_ind * self.time_step)
-                    #print(current_time)
+
+                    print(self.begin_time, current_time)
                     label = self.model.sets[k][predicteds[k][si, t_ind]]
                     #print(label)
                     if len(self.statuses[s][k]) == 0:
